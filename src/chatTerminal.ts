@@ -4,24 +4,9 @@ export interface ChatTerminalConfig {
   executable?: string;
   args?: readonly string[];
   startupCommands?: readonly string[];
-  selector?: ChatTerminalSelectorConfig;
   shell?: string;
   keepOpen?: boolean;
   extraEnv?: Record<string, string>;
-}
-
-export interface ChatTerminalSelectorConfig {
-  enabled?: boolean;
-  models?: readonly ChatTerminalModelOption[];
-  noneLabel?: string;
-  noneCommand?: string;
-  tmuxDefault?: boolean;
-  tmuxSessionName?: string;
-}
-
-export interface ChatTerminalModelOption {
-  label: string;
-  command: string;
 }
 
 export interface BuildChatTerminalLaunchOptions {
@@ -64,7 +49,6 @@ export function buildChatTerminalLaunch(options: BuildChatTerminalLaunchOptions)
     port: options.port,
     token: options.token,
     startupCommands: options.config.startupCommands || [],
-    selector: options.config.selector,
     keepOpen: options.config.keepOpen ?? true
   });
   const placeholders: PlaceholderValues = {
@@ -106,7 +90,6 @@ export function buildStartupCommand(options: {
   port: number;
   token: string;
   startupCommands: readonly string[];
-  selector?: ChatTerminalSelectorConfig;
   keepOpen: boolean;
 }): string {
   const scriptLines = [
@@ -116,9 +99,7 @@ export function buildStartupCommand(options: {
     `export SELECTION_BRIDGE_CONTAINER_HOST=${shellQuote('host.docker.internal')}`,
     `export SELECTION_BRIDGE_PORT=${shellQuote(String(options.port))}`,
     `export SELECTION_BRIDGE_TOKEN=${shellQuote(options.token)}`,
-    ...(options.selector?.enabled
-      ? selectorScriptLines(options.selector)
-      : options.startupCommands)
+    ...options.startupCommands
   ];
 
   if (options.keepOpen) {
@@ -126,100 +107,6 @@ export function buildStartupCommand(options: {
   }
 
   return `${shellQuote(options.shell)} -lc ${shellQuote(scriptLines.join('\n'))}`;
-}
-
-function selectorScriptLines(selector: ChatTerminalSelectorConfig): string[] {
-  const models = normalizeModelOptions(selector.models || defaultModelOptions());
-  const noneLabel = normalizeMenuLabel(selector.noneLabel || 'None');
-  const noneCommand = selector.noneCommand?.trim() || '';
-  const tmuxSessionName = selector.tmuxSessionName?.trim() || 'codex';
-  const tmuxDefault = selector.tmuxDefault ?? false;
-  const prompt = tmuxDefault ? 'Use tmux? [Y/n]: ' : 'Use tmux? [y/N]: ';
-  const tmuxChoiceLines = tmuxDefault
-    ? [
-        '    n|N|no|NO|No) selection_bridge_use_tmux=0 ;;',
-        '    *) selection_bridge_use_tmux=1 ;;'
-      ]
-    : [
-        '    y|Y|yes|YES|Yes) selection_bridge_use_tmux=1 ;;',
-        '    *) selection_bridge_use_tmux=0 ;;'
-      ];
-
-  return [
-    'selection_bridge_select_chatbot() {',
-    '  local selection_bridge_choice',
-    '  local selection_bridge_command',
-    '  while :; do',
-    "    printf '\\nSelection Bridge\\n'",
-    "    printf 'Choose chatbot/model:\\n'",
-    ...models.map((model, index) => {
-      return `    printf '  ${index + 1}) %s\\n' ${shellQuote(model.label)}`;
-    }),
-    `    printf '  0) %s\\n' ${shellQuote(noneLabel)}`,
-    "    printf 'Choice: '",
-    '    IFS= read -r selection_bridge_choice',
-    '    case "$selection_bridge_choice" in',
-    ...models.map((model, index) => {
-      return `      ${index + 1}) selection_bridge_command=${shellQuote(model.command)}; break ;;`;
-    }),
-    `      0|"") selection_bridge_command=${shellQuote(noneCommand)}; break ;;`,
-    "      *) printf 'Invalid selection.\\n' ;;",
-    '    esac',
-    '  done',
-    '  local selection_bridge_use_tmux',
-    `  printf ${shellQuote(prompt)}`,
-    '  IFS= read -r selection_bridge_use_tmux',
-    '  case "$selection_bridge_use_tmux" in',
-    ...tmuxChoiceLines,
-    '  esac',
-    '  if [ "$selection_bridge_use_tmux" = "1" ]; then',
-    '    if ! command -v tmux >/dev/null 2>&1; then',
-    "      printf 'tmux is not installed; running without tmux.\\n' >&2",
-    '      if [ -n "$selection_bridge_command" ]; then',
-    '        eval "$selection_bridge_command"',
-    '      fi',
-    '      return $?',
-    '    fi',
-    `    local selection_bridge_tmux_session=${shellQuote(tmuxSessionName)}`,
-    '    if tmux has-session -t "$selection_bridge_tmux_session" 2>/dev/null; then',
-    '      if [ -n "$selection_bridge_command" ]; then',
-    '        tmux new-window -t "$selection_bridge_tmux_session" "$selection_bridge_command; exec \\"${SHELL:-/bin/sh}\\" -i"',
-    '      fi',
-    '      exec tmux attach-session -t "$selection_bridge_tmux_session"',
-    '    fi',
-    '    if [ -n "$selection_bridge_command" ]; then',
-    '      exec tmux new-session -s "$selection_bridge_tmux_session" "$selection_bridge_command; exec \\"${SHELL:-/bin/sh}\\" -i"',
-    '    fi',
-    '    exec tmux new-session -s "$selection_bridge_tmux_session"',
-    '  fi',
-    '  if [ -n "$selection_bridge_command" ]; then',
-    '    eval "$selection_bridge_command"',
-    '  fi',
-    '}',
-    'selection_bridge_select_chatbot'
-  ];
-}
-
-function defaultModelOptions(): ChatTerminalModelOption[] {
-  return [
-    { label: 'Codex', command: 'codex' },
-    { label: 'Claude', command: 'claude' }
-  ];
-}
-
-function normalizeModelOptions(models: readonly ChatTerminalModelOption[]): ChatTerminalModelOption[] {
-  const normalized = models
-    .map((model) => ({
-      label: normalizeMenuLabel(model.label),
-      command: typeof model.command === 'string' ? model.command.trim() : ''
-    }))
-    .filter((model) => model.label && model.command);
-
-  return normalized.length > 0 ? normalized : defaultModelOptions();
-}
-
-function normalizeMenuLabel(label: string): string {
-  return String(label || '').replace(/\s+/g, ' ').trim();
 }
 
 function devcontainerFunctionLines(): string[] {
@@ -253,6 +140,7 @@ function defaultExecutable(platform: NodeJS.Platform): string {
 
 function defaultArgs(platform: NodeJS.Platform, values: PlaceholderValues): string[] {
   const ghosttyArgs = [
+    ...(platform === 'darwin' ? ['--window-save-state=never'] : []),
     `--working-directory=${values.workspaceFolder}`,
     `--title=Selection Bridge: ${values.workspaceFolderBasename}`,
     `--command=${values.startupCommand}`

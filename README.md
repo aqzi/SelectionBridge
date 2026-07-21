@@ -46,27 +46,13 @@ Configure startup commands in VS Code settings:
 
 Use `["claude"]` instead if that is your preferred agent. Leave the array empty to open a bound shell without starting an agent.
 
-For a terminal-side selector instead of one fixed startup command:
-
-```json
-{
-  "selectionBridge.chatTerminal.selector.enabled": true,
-  "selectionBridge.chatTerminal.selector.models": [
-    { "label": "Codex", "command": "codex" },
-    { "label": "Claude", "command": "claude" }
-  ],
-  "selectionBridge.chatTerminal.selector.tmuxDefault": false,
-  "selectionBridge.chatTerminal.selector.tmuxSessionName": "codex"
-}
-```
-
-The selector shows the configured chatbot/model commands plus a built-in `None` option. After that it asks whether to run the selected command inside tmux. When the selector is enabled, `selectionBridge.chatTerminal.startupCommands` are ignored.
-
 The default macOS launcher is equivalent to:
 
 ```bash
-open -na Ghostty --args --working-directory=<workspace> --command=<startup shell>
+open -na Ghostty --args --window-save-state=never --working-directory=<workspace> --command=<startup shell>
 ```
+
+Disabling window-state restoration for this launch prevents Ghostty from reopening saved windows in addition to the requested chat terminal.
 
 Override `selectionBridge.chatTerminal.executable` and `selectionBridge.chatTerminal.args` to use another terminal. Argument templates support `${workspaceFolder}`, `${workspaceFolderBasename}`, `${selectionBridgeInstance}`, and `${startupCommand}`.
 
@@ -104,29 +90,6 @@ To run Codex inside the devcontainer from the Ghostty button, configure a startu
   ]
 }
 ```
-
-To open a selector that can run Codex or Claude inside the devcontainer, optionally inside tmux:
-
-```json
-{
-  "selectionBridge.chatTerminal.selector.enabled": true,
-  "selectionBridge.chatTerminal.selector.tmuxDefault": true,
-  "selectionBridge.chatTerminal.selector.tmuxSessionName": "codex",
-  "selectionBridge.chatTerminal.selector.noneCommand": "bash ./scripts/devcontainer-exec.sh \"$PWD\" zsh -lc \"export SELECTION_BRIDGE_HOST=host.docker.internal SELECTION_BRIDGE_PORT=$SELECTION_BRIDGE_PORT SELECTION_BRIDGE_TOKEN=$SELECTION_BRIDGE_TOKEN SELECTION_BRIDGE_INSTANCE=$SELECTION_BRIDGE_INSTANCE; exec zsh -i\"",
-  "selectionBridge.chatTerminal.selector.models": [
-    {
-      "label": "Codex",
-      "command": "bash ./scripts/devcontainer-exec.sh \"$PWD\" zsh -lc \"export SELECTION_BRIDGE_HOST=host.docker.internal SELECTION_BRIDGE_PORT=$SELECTION_BRIDGE_PORT SELECTION_BRIDGE_TOKEN=$SELECTION_BRIDGE_TOKEN SELECTION_BRIDGE_INSTANCE=$SELECTION_BRIDGE_INSTANCE; codex; exec zsh -i\""
-    },
-    {
-      "label": "Claude",
-      "command": "bash ./scripts/devcontainer-exec.sh \"$PWD\" zsh -lc \"export SELECTION_BRIDGE_HOST=host.docker.internal SELECTION_BRIDGE_PORT=$SELECTION_BRIDGE_PORT SELECTION_BRIDGE_TOKEN=$SELECTION_BRIDGE_TOKEN SELECTION_BRIDGE_INSTANCE=$SELECTION_BRIDGE_INSTANCE; claude; exec zsh -i\""
-    }
-  ]
-}
-```
-
-When tmux is selected, Selection Bridge uses the configured session name. If that session already exists and a chatbot/model was selected, it opens a new tmux window for the selected command and then attaches to the session. If `None` was selected, it just attaches to the existing session or opens a new shell session.
 
 When Codex runs inside the container, the resolver uses `SELECTION_BRIDGE_HOST`, `SELECTION_BRIDGE_PORT`, and `SELECTION_BRIDGE_TOKEN` instead of the host registry file. On Docker Desktop for macOS, `host.docker.internal` reaches the VS Code-side bridge.
 

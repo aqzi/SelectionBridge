@@ -81,62 +81,6 @@
           },
           "markdownDescription": "Commands to run in the new chat terminal after exporting bridge variables including `SELECTION_BRIDGE_INSTANCE`, `SELECTION_BRIDGE_HOST`, `SELECTION_BRIDGE_PORT`, and `SELECTION_BRIDGE_TOKEN`. Example: `[\"codex\"]` or `[\"claude\"]`."
         },
-        "selectionBridge.chatTerminal.selector.enabled": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "When true, open a terminal-side selector before running a chat command. The selector asks which configured chatbot/model to run and whether to run it inside tmux. When enabled, `selectionBridge.chatTerminal.startupCommands` are ignored."
-        },
-        "selectionBridge.chatTerminal.selector.models": {
-          "type": "array",
-          "default": [
-            {
-              "label": "Codex",
-              "command": "codex"
-            },
-            {
-              "label": "Claude",
-              "command": "claude"
-            }
-          ],
-          "items": {
-            "type": "object",
-            "required": [
-              "label",
-              "command"
-            ],
-            "properties": {
-              "label": {
-                "type": "string",
-                "markdownDescription": "Label shown in the terminal selector."
-              },
-              "command": {
-                "type": "string",
-                "markdownDescription": "Shell command to run when this option is selected. Use CLI flags here for specific models, for example `codex --model gpt-5`."
-              }
-            }
-          },
-          "markdownDescription": "Chatbot/model options shown by the terminal-side selector."
-        },
-        "selectionBridge.chatTerminal.selector.noneLabel": {
-          "type": "string",
-          "default": "None",
-          "markdownDescription": "Label for the built-in no-model selector option."
-        },
-        "selectionBridge.chatTerminal.selector.noneCommand": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "Optional command to run when the no-model option is selected. Leave empty to open a shell only."
-        },
-        "selectionBridge.chatTerminal.selector.tmuxDefault": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "Default answer for the selector's tmux prompt. When true, pressing Enter means yes; when false, pressing Enter means no."
-        },
-        "selectionBridge.chatTerminal.selector.tmuxSessionName": {
-          "type": "string",
-          "default": "codex",
-          "markdownDescription": "tmux session name used when the selector's tmux prompt is answered yes."
-        },
         "selectionBridge.chatTerminal.shell": {
           "type": "string",
           "default": "",

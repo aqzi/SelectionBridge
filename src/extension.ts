@@ -293,14 +293,6 @@ function readChatTerminalConfig(): ChatTerminalConfig {
     executable: config.get<string>('executable', ''),
     args: config.get<string[]>('args', []),
     startupCommands: config.get<string[]>('startupCommands', []),
-    selector: {
-      enabled: config.get<boolean>('selector.enabled', false),
-      models: config.get<{ label: string; command: string }[]>('selector.models', []),
-      noneLabel: config.get<string>('selector.noneLabel', 'None'),
-      noneCommand: config.get<string>('selector.noneCommand', ''),
-      tmuxDefault: config.get<boolean>('selector.tmuxDefault', false),
-      tmuxSessionName: config.get<string>('selector.tmuxSessionName', 'codex')
-    },
     shell: config.get<string>('shell', ''),
     keepOpen: config.get<boolean>('keepOpen', true),
     extraEnv: config.get<Record<string, string>>('extraEnv', {})

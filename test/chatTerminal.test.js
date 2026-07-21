@@ -26,6 +26,7 @@ test('builds the default macOS Ghostty launch command', () => {
 
   assert.equal(launch.executable, 'open');
   assert.deepEqual(launch.args.slice(0, 3), ['-na', 'Ghostty', '--args']);
+  assert.ok(launch.args.includes('--window-save-state=never'));
   assert.ok(launch.args.includes('--working-directory=/Users/me/project'));
   assert.ok(launch.args.includes('--title=Selection Bridge: project'));
   assert.match(launch.args.find((arg) => arg.startsWith('--command=')), /codex/);
@@ -104,38 +105,19 @@ test('quotes startup commands safely', () => {
   assert.match(command, /hello/);
 });
 
-test('builds terminal selector when enabled', () => {
+test('runs the configured startup commands directly and in order', () => {
   const command = buildStartupCommand({
     shell: '/bin/zsh',
     instanceId: 'instance-id',
     port: 4321,
     token: 'secret-token',
-    startupCommands: ['should-not-run'],
-    selector: {
-      enabled: true,
-      models: [
-        {
-          label: 'Codex GPT-5',
-          command: 'codex --model gpt-5'
-        }
-      ],
-      noneCommand: 'echo no model',
-      tmuxDefault: true,
-      tmuxSessionName: 'workspace-chat'
-    },
+    startupCommands: ['echo first', 'echo second'],
     keepOpen: false
   });
 
-  assert.match(command, /Choose chatbot\/model/);
-  assert.match(command, /Codex GPT-5/);
-  assert.match(command, /codex --model gpt-5/);
-  assert.match(command, /echo no model/);
-  assert.match(command, /Use tmux\? \[Y\/n\]/);
-  assert.match(command, /tmux has-session/);
-  assert.match(command, /tmux new-window/);
-  assert.match(command, /tmux new-session -s/);
-  assert.match(command, /workspace-chat/);
-  assert.doesNotMatch(command, /should-not-run/);
+  assert.ok(command.indexOf('echo first') < command.indexOf('echo second'));
+  assert.doesNotMatch(command, /Choose chatbot\/model/);
+  assert.doesNotMatch(command, /tmux/);
 });
 
 test('leaves unknown placeholders unchanged', () => {
