@@ -1,6 +1,22 @@
 # Selection Bridge
 
-Selection Bridge is a local VS Code extension and Codex skill bridge for terminal-based agents. It exposes where text is selected in VS Code, not the selected text itself.
+Selection Bridge is a local VS Code extension and companion skill for terminal-based agents. It exposes where text is selected in VS Code, not the selected text itself.
+
+## Install the Agent Skill
+
+The VS Code extension provides the selection location, while the companion skill teaches your terminal agent how to retrieve and use it. Install the skill globally so it is available in every workspace:
+
+```bash
+npx skills add aqzi/SelectionBridge --skill selection-bridge --global
+```
+
+The installer detects supported agents and asks where to install the skill. To install it explicitly for both Codex and Claude Code:
+
+```bash
+npx skills add aqzi/SelectionBridge --skill selection-bridge --global --agent codex --agent claude-code
+```
+
+Start a new agent session after installation. The skill is also compatible with other agents supported by [`npx skills`](https://github.com/vercel-labs/skills).
 
 ## Development
 
