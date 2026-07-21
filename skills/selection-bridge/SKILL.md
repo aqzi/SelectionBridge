@@ -19,13 +19,13 @@ Use this skill to resolve editor-relative language from a terminal session. The 
 
    If this skill has been installed outside the project repo, run the `scripts/resolve-selection-bridge.js` bundled with this skill.
 
-2. If the resolver returns `ok: false`, report the error plainly. For `ambiguous_workspace`, ask the user to run `Selection Bridge: Copy Bind Command` in the intended VS Code window and paste the exported `SELECTION_BRIDGE_INSTANCE` command into the terminal.
+2. If the resolver returns `ok: false`, report `error.message` followed by `error.recovery` exactly when recovery is present. Do not add a generic troubleshooting checklist or invent alternative recovery steps.
 
 3. If `pointer.kind` is `selection`, read `pointer.document.path` from disk and use the returned zero-based ranges to extract the selected code locally. Respect multiple selections in order. Answer the user's question directly from the selected content; do not preface the answer with file paths, line numbers, or a statement that a selection was resolved unless those details are directly relevant to the answer.
 
 4. If `pointer.kind` is `cursor`, use the cursor location only when the user's request can reasonably refer to the nearby symbol or block. Otherwise ask the user to select text.
 
-5. If `pointer.document.isDirty` is true, warn that the saved file may not match the editor buffer. Ask the user to save before making exact edits or drawing conclusions from the selected text.
+5. Treat pointer and file validation failures as resolver failures; the resolver provides the exact recovery instruction.
 
 ## Rules
 

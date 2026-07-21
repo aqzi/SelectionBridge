@@ -9,6 +9,15 @@ const path = require('node:path');
 const DEFAULT_STALE_MS = 30_000;
 const DEFAULT_TIMEOUT_MS = 1_000;
 
+class PointerRequestError extends Error {
+  constructor(code, message, details = undefined) {
+    super(message);
+    this.name = 'PointerRequestError';
+    this.code = code;
+    this.details = details;
+  }
+}
+
 function getPointerHome(env = process.env) {
   return env.SELECTION_BRIDGE_HOME || env.THIS_POINTER_HOME || path.join(os.homedir(), '.selection-bridge');
 }
@@ -46,46 +55,95 @@ function loadInstances(options = {}) {
 }
 
 function selectInstance(instances, options = {}) {
+  const cwd = normalizePath(options.cwd || process.cwd());
   const explicitInstanceId =
     options.instanceId || options.env?.SELECTION_BRIDGE_INSTANCE || options.env?.THIS_POINTER_INSTANCE;
+  const matches = findWorkspaceMatches(instances, cwd);
+
+  if (instances.length === 0) {
+    return failure(
+      'extension_not_running',
+      'No running Selection Bridge extension was found.',
+      { cwd, ...(explicitInstanceId ? { staleInstanceId: explicitInstanceId } : {}) },
+      'In the intended VS Code window, run "Selection Bridge: Show Current Pointer". If that command is missing, install or enable the Selection Bridge extension.'
+    );
+  }
 
   if (explicitInstanceId) {
     const exactMatch = instances.find((instance) => instance.id === explicitInstanceId);
-    if (!exactMatch) {
-      return failure('instance_not_found', `No active Selection Bridge instance matches ${explicitInstanceId}.`, {
-        instanceId: explicitInstanceId,
-        activeInstances: instances.map(summarizeInstance)
-      });
+    if (exactMatch) {
+      return { ok: true, selectedBy: 'instance', instance: exactMatch };
     }
 
-    return { ok: true, selectedBy: 'instance', instance: exactMatch };
+    if (matches.length === 1) {
+      return {
+        ok: true,
+        selectedBy: 'cwd_fallback',
+        instance: matches[0].instance,
+        recoveredBinding: {
+          staleInstanceId: explicitInstanceId,
+          instanceId: matches[0].instance.id
+        }
+      };
+    }
+
+    if (matches.length > 1) {
+      return failure(
+        'ambiguous_workspace_after_stale_binding',
+        `The bound VS Code instance ${explicitInstanceId} is no longer running, and multiple active windows match ${cwd}.`,
+        {
+          cwd,
+          staleInstanceId: explicitInstanceId,
+          matches: summarizeMatches(matches)
+        },
+        'Run "Selection Bridge: Copy Bind Command" in the intended VS Code window, then paste and run the copied command in this terminal.'
+      );
+    }
+
+    const remoteFailure = unsupportedRemoteWorkspaceFailure(instances, cwd);
+    if (remoteFailure) {
+      return remoteFailure;
+    }
+
+    return failure(
+      'stale_binding_no_matching_workspace',
+      `The bound VS Code instance ${explicitInstanceId} is no longer running, and no active VS Code workspace contains ${cwd}.`,
+      {
+        cwd,
+        staleInstanceId: explicitInstanceId,
+        activeInstances: instances.map(summarizeInstance)
+      },
+      `${workspaceMismatchRecovery(cwd, instances)} To stop using the stale binding, run: unset SELECTION_BRIDGE_INSTANCE.`
+    );
   }
 
-  const cwd = normalizePath(options.cwd || process.cwd());
-  const matches = instances
-    .map((instance) => ({
-      instance,
-      matchingWorkspaceFolders: (instance.workspaceFolders || []).filter((folder) => {
-        return folder.path && isPathInside(folder.path, cwd);
-      })
-    }))
-    .filter((match) => match.matchingWorkspaceFolders.length > 0);
-
   if (matches.length === 0) {
-    return failure('no_matching_workspace', 'No active VS Code window has a workspace folder containing this terminal cwd.', {
-      cwd,
-      activeInstances: instances.map(summarizeInstance)
-    });
+    const remoteFailure = unsupportedRemoteWorkspaceFailure(instances, cwd);
+    if (remoteFailure) {
+      return remoteFailure;
+    }
+
+    return failure(
+      'no_matching_workspace',
+      `This terminal is in ${cwd}, but no active VS Code workspace contains that directory.`,
+      {
+        cwd,
+        activeInstances: instances.map(summarizeInstance)
+      },
+      workspaceMismatchRecovery(cwd, instances)
+    );
   }
 
   if (matches.length > 1) {
-    return failure('ambiguous_workspace', 'Multiple VS Code windows match this terminal cwd. Use Selection Bridge: Copy Bind Command in the intended VS Code window.', {
-      cwd,
-      matches: matches.map((match) => ({
-        ...summarizeInstance(match.instance),
-        matchingWorkspaceFolders: match.matchingWorkspaceFolders
-      }))
-    });
+    return failure(
+      'ambiguous_workspace',
+      `Multiple VS Code windows contain ${cwd}.`,
+      {
+        cwd,
+        matches: summarizeMatches(matches)
+      },
+      'Run "Selection Bridge: Copy Bind Command" in the intended VS Code window, then paste and run the copied command in this terminal.'
+    );
   }
 
   return {
@@ -93,6 +151,63 @@ function selectInstance(instances, options = {}) {
     selectedBy: 'cwd',
     instance: matches[0].instance
   };
+}
+
+function findWorkspaceMatches(instances, cwd) {
+  return instances
+    .map((instance) => ({
+      instance,
+      matchingWorkspaceFolders: (instance.workspaceFolders || []).filter((folder) => {
+        return folder.path && isPathInside(folder.path, cwd);
+      })
+    }))
+    .filter((match) => match.matchingWorkspaceFolders.length > 0);
+}
+
+function summarizeMatches(matches) {
+  return matches.map((match) => ({
+    ...summarizeInstance(match.instance),
+    matchingWorkspaceFolders: match.matchingWorkspaceFolders
+  }));
+}
+
+function unsupportedRemoteWorkspaceFailure(instances, cwd) {
+  const remoteInstances = instances.filter((instance) => {
+    const folders = instance.workspaceFolders || [];
+    return folders.length > 0 && folders.every((folder) => !folder.path && isRemoteUri(folder.uri));
+  });
+
+  if (remoteInstances.length === 0 || remoteInstances.length !== instances.length) {
+    return undefined;
+  }
+
+  return failure(
+    'unsupported_remote_workspace',
+    'The active VS Code workspace is remote, which Selection Bridge does not support.',
+    { cwd, activeInstances: remoteInstances.map(summarizeInstance) },
+    `Open the host checkout locally in VS Code and start Codex from that local workspace instead of ${cwd}.`
+  );
+}
+
+function isRemoteUri(uri) {
+  return typeof uri === 'string' && !uri.startsWith('file:');
+}
+
+function workspaceMismatchRecovery(cwd, instances) {
+  const workspacePaths = [...new Set(
+    instances.flatMap((instance) =>
+      (instance.workspaceFolders || []).map((folder) => folder.path).filter(Boolean)
+    )
+  )];
+
+  if (workspacePaths.length === 0) {
+    return `Open ${quoteForMessage(cwd)} as a VS Code workspace, then repeat the request.`;
+  }
+
+  const commands = workspacePaths
+    .map((workspacePath) => `\`cd ${shellQuote(workspacePath)}\``)
+    .join(' or ');
+  return `Open ${quoteForMessage(cwd)} as a VS Code workspace, or move this terminal into an active workspace by running: ${commands}.`;
 }
 
 function requestPointer(instance, options = {}) {
@@ -120,12 +235,31 @@ function requestPointer(instance, options = {}) {
           try {
             parsed = JSON.parse(body);
           } catch {
-            reject(new Error(`Selection Bridge server returned non-JSON response with status ${response.statusCode}.`));
+            reject(
+              new PointerRequestError(
+                'invalid_response',
+                `Selection Bridge server returned non-JSON response with status ${response.statusCode}.`,
+                { statusCode: response.statusCode }
+              )
+            );
             return;
           }
 
           if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
-            reject(new Error(parsed?.error?.message || `Selection Bridge server returned status ${response.statusCode}.`));
+            const requestErrorCode =
+              response.statusCode === 401
+                ? 'authentication_failed'
+                : response.statusCode === 404
+                  ? 'protocol_mismatch'
+                  : 'http_error';
+            reject(
+              new PointerRequestError(
+                requestErrorCode,
+                parsed?.error?.message ||
+                  `Selection Bridge server returned status ${response.statusCode}.`,
+                { statusCode: response.statusCode, serverError: parsed?.error }
+              )
+            );
             return;
           }
 
@@ -135,7 +269,13 @@ function requestPointer(instance, options = {}) {
     );
 
     request.on('timeout', () => {
-      request.destroy(new Error(`Timed out after ${timeoutMs}ms while querying Selection Bridge instance ${instance.id}.`));
+      request.destroy(
+        new PointerRequestError(
+          'request_timeout',
+          `Timed out after ${timeoutMs}ms while querying Selection Bridge instance ${instance.id}.`,
+          { timeoutMs }
+        )
+      );
     });
     request.on('error', reject);
     request.end();
@@ -145,43 +285,270 @@ function requestPointer(instance, options = {}) {
 async function resolvePointer(options = {}) {
   const env = options.env || process.env;
   const cwd = normalizePath(options.cwd || process.cwd());
-  const instances = loadInstances({
+  const loadOptions = {
     env,
     home: options.home,
     instancesDir: options.instancesDir,
     staleMs: options.staleMs,
     now: options.now
-  });
-  const selection = selectInstance(instances, {
+  };
+  const load = options.loadInstances || loadInstances;
+  const selectOptions = {
     env,
     cwd,
     instanceId: options.instanceId
-  });
+  };
+  const hasExplicitBinding = Boolean(
+    options.instanceId || env.SELECTION_BRIDGE_INSTANCE || env.THIS_POINTER_INSTANCE
+  );
+  let instances;
+  try {
+    instances = load(loadOptions);
+  } catch (error) {
+    return registryReadFailure(error, loadOptions);
+  }
+
+  let selection = selectInstance(instances, selectOptions);
 
   if (!selection.ok) {
     return selection;
   }
 
+  const pointerRequester = options.requestPointer || requestPointer;
+  let response;
   try {
-    const pointerRequester = options.requestPointer || requestPointer;
-    const response = await pointerRequester(selection.instance, { timeoutMs: options.timeoutMs });
-    const responseInstance = {
-      ...selection.instance,
-      ...(response.instance || {}),
-      token: selection.instance.token
-    };
-    return {
-      ok: true,
-      selectedBy: selection.selectedBy,
-      cwd,
-      instance: sanitizeInstance(responseInstance),
-      pointer: response.pointer
-    };
+    response = await pointerRequester(selection.instance, { timeoutMs: options.timeoutMs });
   } catch (error) {
-    return failure('query_failed', error instanceof Error ? error.message : String(error), {
-      instance: summarizeInstance(selection.instance)
-    });
+    if (!isRetryableRequestError(error)) {
+      return requestFailure(error, selection.instance, options.timeoutMs, false, hasExplicitBinding);
+    }
+
+    try {
+      instances = load(loadOptions);
+    } catch (loadError) {
+      return registryReadFailure(loadError, loadOptions);
+    }
+
+    selection = selectInstance(instances, selectOptions);
+    if (!selection.ok) {
+      return selection;
+    }
+
+    try {
+      response = await pointerRequester(selection.instance, { timeoutMs: options.timeoutMs });
+    } catch (retryError) {
+      return requestFailure(
+        retryError,
+        selection.instance,
+        options.timeoutMs,
+        true,
+        hasExplicitBinding
+      );
+    }
   }
+
+  return resolvedPointerResult(response, selection, cwd, options.fileSystem || fs);
+}
+
+function isRetryableRequestError(error) {
+  return [
+    'authentication_failed',
+    'request_timeout',
+    'ECONNREFUSED',
+    'ECONNRESET',
+    'EPIPE'
+  ].includes(error?.code);
+}
+
+function requestFailure(
+  error,
+  instance,
+  timeoutMs,
+  retried = false,
+  hasExplicitBinding = false
+) {
+  const code = error?.code;
+  const instanceName = instance.workspaceName || instance.id;
+  const details = {
+    instance: summarizeInstance(instance),
+    ...(error?.details ? { request: error.details } : {}),
+    retried
+  };
+
+  if (code === 'authentication_failed') {
+    return failure(
+      'authentication_failed_after_retry',
+      `The Selection Bridge extension in ${quoteForMessage(instanceName)} rejected the refreshed registry token.`,
+      details,
+      hasExplicitBinding
+        ? 'Run "Selection Bridge: Reset Instance Id" in that VS Code window, then paste and run the newly copied binding command in this terminal.'
+        : 'Run "Selection Bridge: Reset Instance Id" in that VS Code window, then repeat the request.'
+    );
+  }
+
+  if (code === 'ECONNREFUSED' || code === 'ECONNRESET' || code === 'EPIPE') {
+    return failure(
+      'connection_refused_after_retry',
+      `The matching VS Code window ${quoteForMessage(instanceName)} was found, but its local Selection Bridge server did not accept the connection after an automatic retry.`,
+      details,
+      `Run "Developer: Reload Window" in the VS Code window for ${quoteForMessage(instanceName)}, then repeat the request.`
+    );
+  }
+
+  if (code === 'request_timeout') {
+    const effectiveTimeout = error?.details?.timeoutMs || timeoutMs || DEFAULT_TIMEOUT_MS;
+    return failure(
+      'connection_timeout_after_retry',
+      `The Selection Bridge extension in ${quoteForMessage(instanceName)} did not answer within ${effectiveTimeout}ms after an automatic retry.`,
+      details,
+      `Run "Developer: Reload Window" in the VS Code window for ${quoteForMessage(instanceName)}, then repeat the request.`
+    );
+  }
+
+  if (code === 'protocol_mismatch' || code === 'invalid_response') {
+    return failure(
+      'protocol_mismatch',
+      `The Selection Bridge extension in ${quoteForMessage(instanceName)} returned an incompatible response.`,
+      details,
+      'Install matching versions of the Selection Bridge extension and skill, reload VS Code, and then repeat the request.'
+    );
+  }
+
+  return failure(
+    'query_failed',
+    `The Selection Bridge extension in ${quoteForMessage(instanceName)} could not be queried: ${errorMessage(error)}`,
+    details,
+    'In that VS Code window, run "Selection Bridge: Show Current Pointer", then repeat the request.'
+  );
+}
+
+function registryReadFailure(error, options) {
+  const instancesDir = getInstancesDir(options);
+  return failure(
+    'registry_unreadable',
+    `The Selection Bridge registry at ${instancesDir} could not be read: ${errorMessage(error)}`,
+    { instancesDir },
+    `Ensure the current terminal user can read ${instancesDir}, then repeat the request.`
+  );
+}
+
+function resolvedPointerResult(response, selection, cwd, fileSystem) {
+  if (!response || response.ok === false || !response.pointer) {
+    return failure(
+      'protocol_mismatch',
+      'The Selection Bridge extension returned a response without pointer metadata.',
+      { response },
+      'Install matching versions of the Selection Bridge extension and skill, reload VS Code, and then repeat the request.'
+    );
+  }
+
+  const pointerFailure = validatePointer(response.pointer, fileSystem);
+  if (pointerFailure) {
+    return pointerFailure;
+  }
+
+  const responseInstance = {
+    ...selection.instance,
+    ...(response.instance || {}),
+    token: selection.instance.token
+  };
+  return {
+    ok: true,
+    selectedBy: selection.selectedBy,
+    ...(selection.recoveredBinding ? { recoveredBinding: selection.recoveredBinding } : {}),
+    cwd,
+    instance: sanitizeInstance(responseInstance),
+    pointer: response.pointer
+  };
+}
+
+function validatePointer(pointer, fileSystem) {
+  if (pointer.kind === 'none') {
+    return failure(
+      'no_active_editor',
+      'VS Code has no active text editor.',
+      undefined,
+      'Focus the intended saved file in VS Code, select the relevant code, and then repeat the request.'
+    );
+  }
+
+  if (!pointer.document) {
+    return failure(
+      'protocol_mismatch',
+      'The Selection Bridge extension returned pointer metadata without a document.',
+      { pointerKind: pointer.kind },
+      'Install matching versions of the Selection Bridge extension and skill, reload VS Code, and then repeat the request.'
+    );
+  }
+
+  const document = pointer.document;
+  if (document.isUntitled || document.scheme === 'untitled') {
+    return failure(
+      'untitled_document',
+      'The active VS Code document has not been saved to disk.',
+      { uri: document.uri },
+      'Save the document to the current workspace, select the relevant code, and then repeat the request.'
+    );
+  }
+
+  if (document.scheme && document.scheme !== 'file') {
+    return failure(
+      'unsupported_remote_workspace',
+      'The selected document is in a remote workspace, which Selection Bridge does not support.',
+      { uri: document.uri, scheme: document.scheme },
+      'Open the host checkout locally in VS Code and start Codex from that local workspace, then repeat the request.'
+    );
+  }
+
+  if (!document.path) {
+    return failure(
+      'document_path_unavailable',
+      'The Selection Bridge extension did not provide a local path for the active document.',
+      { uri: document.uri, scheme: document.scheme },
+      'Focus a saved file inside the current local VS Code workspace, select the relevant code, and then repeat the request.'
+    );
+  }
+
+  if (document.isDirty) {
+    return failure(
+      'document_dirty',
+      `The selected file ${quoteForMessage(document.path)} has unsaved changes.`,
+      { path: document.path },
+      `Save ${quoteForMessage(document.path)} in VS Code, then repeat the request so the on-disk content matches the editor.`
+    );
+  }
+
+  try {
+    fileSystem.accessSync(document.path, fileSystem.constants?.R_OK ?? fs.constants.R_OK);
+    const stats = fileSystem.statSync(document.path);
+    if (!stats.isFile()) {
+      return failure(
+        'selected_path_not_file',
+        `The selected path ${quoteForMessage(document.path)} is not a regular file.`,
+        { path: document.path },
+        'Focus a saved file in VS Code, select the relevant code, and then repeat the request.'
+      );
+    }
+  } catch (error) {
+    const systemCode = error?.code;
+    if (systemCode === 'ENOENT') {
+      return failure(
+        'selected_file_missing',
+        `The selected file ${quoteForMessage(document.path)} no longer exists on disk.`,
+        { path: document.path },
+        `Restore or save ${quoteForMessage(document.path)} in VS Code, then repeat the request.`
+      );
+    }
+
+    return failure(
+      'selected_file_unreadable',
+      `The terminal cannot read the selected file ${quoteForMessage(document.path)}: ${errorMessage(error)}`,
+      { path: document.path, ...(systemCode ? { systemCode } : {}) },
+      `Grant the current terminal user read access to ${quoteForMessage(document.path)}, then repeat the request.`
+    );
+  }
+
+  return undefined;
 }
 
 async function main(argv = process.argv.slice(2), io = process) {
@@ -315,6 +682,18 @@ function normalizeForPlatform(inputPath) {
   return process.platform === 'win32' ? inputPath.toLowerCase() : inputPath;
 }
 
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function quoteForMessage(value) {
+  return JSON.stringify(String(value));
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
 function sanitizeInstance(instance) {
   const { token, registryFile, ...safeInstance } = instance;
   return safeInstance;
@@ -333,12 +712,13 @@ function summarizeInstance(instance) {
   };
 }
 
-function failure(code, message, details = undefined) {
+function failure(code, message, details = undefined, recovery = undefined) {
   return {
     ok: false,
     error: {
       code,
       message,
+      ...(recovery ? { recovery } : {}),
       ...(details ? { details } : {})
     }
   };
