@@ -27,6 +27,7 @@ test('builds the default macOS Ghostty launch command', () => {
   assert.equal(launch.executable, 'open');
   assert.deepEqual(launch.args.slice(0, 3), ['-na', 'Ghostty', '--args']);
   assert.ok(launch.args.includes('--window-save-state=never'));
+  assert.ok(launch.args.includes('--quit-after-last-window-closed=true'));
   assert.ok(launch.args.includes('--working-directory=/Users/me/project'));
   assert.ok(launch.args.includes('--title=Selection Bridge: project'));
   assert.match(launch.args.find((arg) => arg.startsWith('--command=')), /codex/);

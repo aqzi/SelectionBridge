@@ -49,10 +49,10 @@ Use `["claude"]` instead if that is your preferred agent. Leave the array empty 
 The default macOS launcher is equivalent to:
 
 ```bash
-open -na Ghostty --args --window-save-state=never --working-directory=<workspace> --command=<startup shell>
+open -na Ghostty --args --window-save-state=never --quit-after-last-window-closed=true --working-directory=<workspace> --command=<startup shell>
 ```
 
-Disabling window-state restoration for this launch prevents Ghostty from reopening saved windows in addition to the requested chat terminal.
+Disabling window-state restoration prevents Ghostty from reopening saved windows in addition to the requested chat terminal. The launched Ghostty instance also quits when its last window closes.
 
 Override `selectionBridge.chatTerminal.executable` and `selectionBridge.chatTerminal.args` to use another terminal. Argument templates support `${workspaceFolder}`, `${workspaceFolderBasename}`, `${selectionBridgeInstance}`, and `${startupCommand}`.
 

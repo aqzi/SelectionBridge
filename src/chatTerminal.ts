@@ -140,7 +140,9 @@ function defaultExecutable(platform: NodeJS.Platform): string {
 
 function defaultArgs(platform: NodeJS.Platform, values: PlaceholderValues): string[] {
   const ghosttyArgs = [
-    ...(platform === 'darwin' ? ['--window-save-state=never'] : []),
+    ...(platform === 'darwin'
+      ? ['--window-save-state=never', '--quit-after-last-window-closed=true']
+      : []),
     `--working-directory=${values.workspaceFolder}`,
     `--title=Selection Bridge: ${values.workspaceFolderBasename}`,
     `--command=${values.startupCommand}`
