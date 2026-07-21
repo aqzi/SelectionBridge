@@ -69,7 +69,7 @@ For remote selection resolution, all of these must be true:
 - The agent runs in the same remote execution environment and user account as the extension, with its current directory inside the opened workspace. Starting it from that window's terminal guarantees this in the usual setup.
 - The selected file is saved.
 
-The resolver reports one failure and one targeted recovery. Common remote failures are:
+The resolver reports one failure and one targeted recovery. Common setup and connection failures are:
 
 | Failure | Exact fix |
 | --- | --- |
@@ -77,5 +77,6 @@ The resolver reports one failure and one targeted recovery. Common remote failur
 | `remote_extension_not_running` | In the target remote VS Code window, install Selection Bridge on the remote side, run `Developer: Reload Window`, and start a new agent session from that window's terminal. |
 | `remote_extension_wrong_host` or `remote_document_path_unavailable` | Update the remote copy of Selection Bridge, confirm it is listed under the remote host rather than only locally, and reload the window. |
 | `no_matching_workspace` | Run the exact `cd` command returned by the resolver, or open the terminal's current directory as the VS Code workspace. |
+| `connection_permission_denied` | Approve the agent tool's local-loopback permission request. The skill retries silently; do not reload VS Code. |
 | `remote_file_not_visible` | Run the returned `test -f ...` command in a new terminal from the target remote window. Start the agent there if it succeeds; restore or save the file if it fails. |
 | `connection_refused_after_retry` or `connection_timeout_after_retry` | Reload the target VS Code window. If it persists, start the agent in a new terminal from that remote window so it shares the extension host's loopback network. |

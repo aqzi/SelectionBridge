@@ -284,6 +284,34 @@ test('reports connection refusal only after an automatic retry', async () => {
   assert.match(result.error.recovery, /Developer: Reload Window/);
 });
 
+test('classifies a sandbox-blocked loopback connection as a permission request', async () => {
+  const { project } = createProject();
+  let requestCount = 0;
+
+  const result = await resolvePointer({
+    cwd: project,
+    loadInstances: () => [instance('one', [project])],
+    requestPointer: async () => {
+      requestCount += 1;
+      throw Object.assign(
+        new Error('connect EPERM 127.0.0.1:50659 - Local (0.0.0.0:0)'),
+        {
+          code: 'EPERM',
+          syscall: 'connect',
+          address: '127.0.0.1',
+          port: 50659
+        }
+      );
+    }
+  });
+
+  assert.equal(requestCount, 1);
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'connection_permission_denied');
+  assert.match(result.error.recovery, /permission/);
+  assert.doesNotMatch(JSON.stringify(result), /could not be queried|Show Current Pointer/);
+});
+
 test('connection failure for a remote instance tells the user to move the agent terminal', async () => {
   const { project } = createProject();
   const remote = remoteInstance('remote', project);

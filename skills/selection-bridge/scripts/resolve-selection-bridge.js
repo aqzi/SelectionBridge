@@ -414,8 +414,28 @@ function requestFailure(
   const details = {
     instance: summarizeInstance(instance),
     ...(error?.details ? { request: error.details } : {}),
+    ...(error?.syscall || error?.address || error?.port
+      ? {
+          systemError: {
+            ...(code ? { code } : {}),
+            ...(error.syscall ? { syscall: error.syscall } : {}),
+            ...(error.address ? { address: error.address } : {}),
+            ...(error.port ? { port: error.port } : {})
+          }
+        }
+      : {}),
     retried
   };
+
+  if (code === 'EPERM' || code === 'EACCES') {
+    const endpoint = `127.0.0.1:${instance.port}`;
+    return failure(
+      'connection_permission_denied',
+      `The resolver was not permitted to connect to the Selection Bridge loopback server at ${endpoint}.`,
+      details,
+      `Retry the resolver with permission to connect to the local loopback address ${endpoint}. Do not reload VS Code; the extension is already running.`
+    );
+  }
 
   if (code === 'authentication_failed') {
     return failure(

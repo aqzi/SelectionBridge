@@ -19,13 +19,15 @@ Use this skill to resolve editor-relative language from a terminal session. The 
 
    If this skill has been installed outside the project repo, run the `scripts/resolve-selection-bridge.js` bundled with this skill.
 
-2. If the resolver returns `ok: false`, report `error.message` followed by `error.recovery` exactly when recovery is present. Do not add a generic troubleshooting checklist or invent alternative recovery steps.
+2. If running the resolver is blocked or fails because the execution tool lacks permission, do not show that first failure to the user. Request permission through the tool's permission mechanism, then rerun the exact same resolver command. If the retry succeeds, continue silently. If the user denies permission, say only that permission is required to run Selection Bridge.
 
-3. If `pointer.kind` is `selection`, read `pointer.document.path` from disk and use the returned zero-based ranges to extract the selected code locally. Respect multiple selections in order. Answer the user's question directly from the selected content; do not preface the answer with file paths, line numbers, or a statement that a selection was resolved unless those details are directly relevant to the answer.
+3. For any other `ok: false` result, report `error.message` followed by `error.recovery` exactly when recovery is present. Do not add a generic troubleshooting checklist or invent alternative recovery steps. If an approved retry still returns `connection_permission_denied`, report its permission-specific message and recovery exactly.
 
-4. If `pointer.kind` is `cursor`, use the cursor location only when the user's request can reasonably refer to the nearby symbol or block. Otherwise ask the user to select text.
+4. If `pointer.kind` is `selection`, read `pointer.document.path` from disk and use the returned zero-based ranges to extract the selected code locally. Respect multiple selections in order. Answer the user's question directly from the selected content; do not preface the answer with file paths, line numbers, or a statement that a selection was resolved unless those details are directly relevant to the answer.
 
-5. Treat pointer and file validation failures as resolver failures; the resolver provides the exact recovery instruction.
+5. If `pointer.kind` is `cursor`, use the cursor location only when the user's request can reasonably refer to the nearby symbol or block. Otherwise ask the user to select text.
+
+6. Treat pointer and file validation failures as resolver failures; the resolver provides the exact recovery instruction.
 
 ## Rules
 
