@@ -3,7 +3,7 @@
   "displayName": "Selection Bridge",
   "description": "Expose VS Code selection locations to terminal-based coding agents without sending selected text.",
   "version": "0.0.1",
-  "publisher": "local",
+  "publisher": "Aquila Ziedins",
   "private": false,
   "license": "MIT",
   "engines": {
@@ -58,5 +58,8 @@
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.90.0",
     "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "@vscode/vsce": "^3.9.2"
   }
 }
