@@ -1,0 +1,33 @@
+{
+  "name": "Selection Bridge Demo",
+  "image": "mcr.microsoft.com/devcontainers/base:noble",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "selectionBridge.devcontainer.localWorkspaceFolder": "${localWorkspaceFolder}",
+        "selectionBridge.chatTerminal.selector.enabled": true,
+        "selectionBridge.chatTerminal.selector.tmuxDefault": true,
+        "selectionBridge.chatTerminal.selector.tmuxSessionName": "codex",
+        "selectionBridge.chatTerminal.selector.noneCommand": "bash ./scripts/devcontainer-exec.sh \"$PWD\" zsh -lc \"export SELECTION_BRIDGE_HOST=host.docker.internal SELECTION_BRIDGE_PORT=$SELECTION_BRIDGE_PORT SELECTION_BRIDGE_TOKEN=$SELECTION_BRIDGE_TOKEN SELECTION_BRIDGE_INSTANCE=$SELECTION_BRIDGE_INSTANCE; exec zsh -i\"",
+        "selectionBridge.chatTerminal.selector.models": [
+          {
+            "label": "Codex",
+            "command": "bash ./scripts/devcontainer-exec.sh \"$PWD\" zsh -lc \"export SELECTION_BRIDGE_HOST=host.docker.internal SELECTION_BRIDGE_PORT=$SELECTION_BRIDGE_PORT SELECTION_BRIDGE_TOKEN=$SELECTION_BRIDGE_TOKEN SELECTION_BRIDGE_INSTANCE=$SELECTION_BRIDGE_INSTANCE; codex; exec zsh -i\""
+          },
+          {
+            "label": "Claude",
+            "command": "bash ./scripts/devcontainer-exec.sh \"$PWD\" zsh -lc \"export SELECTION_BRIDGE_HOST=host.docker.internal SELECTION_BRIDGE_PORT=$SELECTION_BRIDGE_PORT SELECTION_BRIDGE_TOKEN=$SELECTION_BRIDGE_TOKEN SELECTION_BRIDGE_INSTANCE=$SELECTION_BRIDGE_INSTANCE; claude; exec zsh -i\""
+          }
+        ],
+        "terminal.integrated.defaultProfile.linux": "zsh"
+      }
+    }
+  },
+  "features": {},
+	"userEnvProbe": "loginInteractiveShell",
+	"postCreateCommand": "curl -fsSL https://claude.ai/install.sh | bash && curl -fsSL https://chatgpt.com/codex/install.sh | sh",
+  "mounts": [
+    "source=${localEnv:HOME}/.claude,target=/root/.claude,type=bind",
+    "source=${localEnv:HOME}/.codex,target=/root/.codex,type=bind"
+  ]
+}
