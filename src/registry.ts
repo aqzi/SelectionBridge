@@ -10,7 +10,16 @@ export interface RegistryWorkspaceFolder {
   name: string;
   uri: string;
   path?: string;
+  remotePath?: string;
   index: number;
+}
+
+export interface RegistryExecutionEnvironment {
+  hostname: string;
+  home: string;
+  platform: NodeJS.Platform;
+  extensionHostKind: 'ui' | 'workspace';
+  vscodeRemoteName?: string;
 }
 
 export interface RegistryEntry {
@@ -28,6 +37,7 @@ export interface RegistryEntry {
   createdAt: string;
   updatedAt: string;
   vscodeSessionId?: string;
+  execution?: RegistryExecutionEnvironment;
 }
 
 export function getPointerHome(): string {

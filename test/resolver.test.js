@@ -24,12 +24,24 @@ test('matches a cwd inside a workspace folder', () => {
 });
 
 test('reports exactly how to activate the extension when no live instance exists', () => {
-  const result = selectInstance([], { cwd: '/work/app' });
+  const result = selectInstance([], { cwd: '/work/app', env: {} });
 
   assert.equal(result.ok, false);
   assert.equal(result.error.code, 'extension_not_running');
   assert.match(result.error.recovery, /Show Current Pointer/);
   assert.match(result.error.recovery, /install or enable/);
+});
+
+test('tells a remote terminal to install the extension in the remote window', () => {
+  const result = selectInstance([], {
+    cwd: '/work/app',
+    env: { SSH_CONNECTION: 'client server', HOME: '/home/agent', USER: 'agent' }
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'remote_extension_not_running');
+  assert.match(result.error.recovery, /button beginning with "Install in"/);
+  assert.match(result.error.recovery, /terminal opened from that same VS Code window/);
 });
 
 test('selects the instance whose workspace contains cwd', () => {
@@ -117,12 +129,23 @@ test('explains how to remove a stale binding when no cwd match exists', () => {
   assert.match(result.error.recovery, /cd '\/work\/other'/);
 });
 
-test('reports unsupported remote workspaces specifically', () => {
+test('reports a remote extension that is old or running in the wrong host', () => {
   const result = selectInstance([remoteInstance('remote')], { cwd: '/workspaces/app' });
 
   assert.equal(result.ok, false);
-  assert.equal(result.error.code, 'unsupported_remote_workspace');
-  assert.match(result.error.recovery, /host checkout locally/);
+  assert.equal(result.error.code, 'remote_extension_wrong_host');
+  assert.match(result.error.recovery, /installed on the remote side/);
+});
+
+test('matches a remote workspace using its execution-local path', () => {
+  const result = selectInstance(
+    [remoteInstance('remote', '/workspaces/app')],
+    { cwd: '/workspaces/app/src' }
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.instance.id, 'remote');
+  assert.equal(result.selectedBy, 'cwd');
 });
 
 test('loadInstances filters stale entries and malformed JSON', () => {
@@ -261,6 +284,22 @@ test('reports connection refusal only after an automatic retry', async () => {
   assert.match(result.error.recovery, /Developer: Reload Window/);
 });
 
+test('connection failure for a remote instance tells the user to move the agent terminal', async () => {
+  const { project } = createProject();
+  const remote = remoteInstance('remote', project);
+
+  const result = await resolvePointer({
+    cwd: project,
+    loadInstances: () => [remote],
+    requestPointer: async () => {
+      throw requestError('ECONNREFUSED', 'Connection refused');
+    }
+  });
+
+  assert.equal(result.error.code, 'connection_refused_after_retry');
+  assert.match(result.error.recovery, /not sharing the extension host's loopback network/);
+});
+
 test('reports timeout only after an automatic retry', async () => {
   const { project } = createProject();
   let requestCount = 0;
@@ -334,7 +373,26 @@ test('asks the user to save an untitled document before retrying', async () => {
   assert.match(result.error.recovery, /Save the document/);
 });
 
-test('reports remote selected documents as unsupported', async () => {
+test('accepts a readable selected document from a remote workspace', async () => {
+  const { project, file } = createProject();
+
+  const result = await resolvePointer({
+    cwd: project,
+    loadInstances: () => [remoteInstance('remote', project)],
+    requestPointer: async () => ({
+      ok: true,
+      pointer: selectedPointer(file, {
+        uri: `vscode-remote://ssh-remote${file}`,
+        scheme: 'vscode-remote'
+      })
+    })
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.pointer.document.path, file);
+});
+
+test('reports an outdated remote pointer that has no execution path', async () => {
   const { project } = createProject();
 
   const result = await resolvePointer({
@@ -354,8 +412,29 @@ test('reports remote selected documents as unsupported', async () => {
     })
   });
 
-  assert.equal(result.error.code, 'unsupported_remote_workspace');
-  assert.match(result.error.recovery, /host checkout locally/);
+  assert.equal(result.error.code, 'remote_document_path_unavailable');
+  assert.match(result.error.recovery, /installed on the remote side/);
+});
+
+test('reports when the selected remote file is not visible to this terminal', async () => {
+  const { project } = createProject();
+  const missingFile = path.join(project, 'src', 'missing.ts');
+
+  const result = await resolvePointer({
+    cwd: project,
+    loadInstances: () => [remoteInstance('remote', project)],
+    requestPointer: async () => ({
+      ok: true,
+      pointer: selectedPointer(missingFile, {
+        uri: `vscode-remote://ssh-remote${missingFile}`,
+        scheme: 'vscode-remote'
+      })
+    })
+  });
+
+  assert.equal(result.error.code, 'remote_file_not_visible');
+  assert.match(result.error.recovery, /test -f/);
+  assert.match(result.error.recovery, /different environment/);
 });
 
 test('reports unsaved selected files with an exact save instruction', async () => {
@@ -438,16 +517,24 @@ function requestError(code, message, details = undefined) {
   return Object.assign(new Error(message), { code, ...(details ? { details } : {}) });
 }
 
-function remoteInstance(id) {
+function remoteInstance(id, workspacePath = undefined) {
   return {
     ...instance(id, []),
     workspaceFolders: [
       {
         name: 'app',
-        uri: 'vscode-remote://dev-container/workspaces/app',
+        uri: `vscode-remote://remote${workspacePath || '/workspaces/app'}`,
+        ...(workspacePath ? { path: workspacePath } : {}),
         index: 0
       }
-    ]
+    ],
+    execution: {
+      hostname: 'remote',
+      home: '/home/agent',
+      platform: 'linux',
+      extensionHostKind: 'workspace',
+      vscodeRemoteName: 'remote'
+    }
   };
 }
 

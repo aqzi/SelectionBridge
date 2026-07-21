@@ -21,6 +21,10 @@ test('does not contribute configuration settings', () => {
   assert.equal(manifest.contributes.configuration, undefined);
 });
 
+test('runs beside the workspace in local and remote VS Code windows', () => {
+  assert.deepEqual(manifest.extensionKind, ['workspace']);
+});
+
 test('does not publish private workflow files', () => {
   assert.equal(manifest.private, false);
   assert.equal(manifest.files.includes('private'), false);

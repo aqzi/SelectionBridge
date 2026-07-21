@@ -71,6 +71,38 @@ test('creates selection snapshot for multiple selections', () => {
   assert.equal(snapshot.primarySelection.singleLineCharacterSpan, 4);
 });
 
+test('serializes paths as seen by a remote workspace extension host', () => {
+  const snapshot = createPointerSnapshot(
+    {
+      document: fakeRemoteDocument('/remote/workspace/app/src/file.ts'),
+      selection: rangeSelection(1, 0, 1, 4),
+      selections: [rangeSelection(1, 0, 1, 4)]
+    },
+    fakeRemoteWorkspaceFolder('/remote/workspace/app'),
+    '2026-07-20T10:00:00.000Z'
+  );
+
+  assert.equal(snapshot.document.scheme, 'vscode-remote');
+  assert.equal(snapshot.document.path, '/remote/workspace/app/src/file.ts');
+  assert.equal(snapshot.document.remotePath, '/remote/workspace/app/src/file.ts');
+  assert.equal(snapshot.document.workspaceFolder.path, '/remote/workspace/app');
+});
+
+test('does not expose a disk path for virtual document schemes', () => {
+  const document = fakeRemoteDocument('/virtual/file.ts', 'git');
+  const snapshot = createPointerSnapshot(
+    {
+      document,
+      selection: emptySelection(0, 0),
+      selections: [emptySelection(0, 0)]
+    },
+    undefined,
+    '2026-07-20T10:00:00.000Z'
+  );
+
+  assert.equal(snapshot.document.path, undefined);
+});
+
 function fakeDocument(filePath) {
   return {
     uri: {
@@ -95,6 +127,36 @@ function fakeWorkspaceFolder(folderPath) {
       scheme: 'file',
       fsPath: folderPath,
       toString: () => `file://${folderPath}`
+    }
+  };
+}
+
+function fakeRemoteDocument(filePath, scheme = 'vscode-remote') {
+  return {
+    uri: {
+      scheme,
+      fsPath: filePath,
+      path: filePath,
+      toString: () => `${scheme}://remote${filePath}`
+    },
+    fileName: filePath,
+    languageId: 'typescript',
+    version: 12,
+    isDirty: false,
+    isUntitled: false,
+    lineCount: 20
+  };
+}
+
+function fakeRemoteWorkspaceFolder(folderPath) {
+  return {
+    name: 'app',
+    index: 0,
+    uri: {
+      scheme: 'vscode-remote',
+      fsPath: folderPath,
+      path: folderPath,
+      toString: () => `vscode-remote://remote${folderPath}`
     }
   };
 }

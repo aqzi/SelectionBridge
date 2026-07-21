@@ -56,16 +56,30 @@ function loadInstances(options = {}) {
 
 function selectInstance(instances, options = {}) {
   const cwd = normalizePath(options.cwd || process.cwd());
+  const env = options.env || process.env;
   const explicitInstanceId =
-    options.instanceId || options.env?.SELECTION_BRIDGE_INSTANCE || options.env?.THIS_POINTER_INSTANCE;
+    options.instanceId || env.SELECTION_BRIDGE_INSTANCE || env.THIS_POINTER_INSTANCE;
   const matches = findWorkspaceMatches(instances, cwd);
 
   if (instances.length === 0) {
+    if (isLikelyRemoteTerminal(env)) {
+      return failure(
+        'remote_extension_not_running',
+        'This terminal appears to be remote, but no Selection Bridge extension is running in the same remote environment.',
+        {
+          cwd,
+          terminal: summarizeTerminalEnvironment(env),
+          ...(explicitInstanceId ? { staleInstanceId: explicitInstanceId } : {})
+        },
+        'In the target remote VS Code window, open Extensions, find "Selection Bridge", and click the button beginning with "Install in" for that remote. Run "Developer: Reload Window" from the Command Palette, then start a new agent session in a terminal opened from that same VS Code window.'
+      );
+    }
+
     return failure(
       'extension_not_running',
-      'No running Selection Bridge extension was found.',
+      'No running Selection Bridge extension was found in this terminal environment.',
       { cwd, ...(explicitInstanceId ? { staleInstanceId: explicitInstanceId } : {}) },
-      'In the intended VS Code window, run "Selection Bridge: Show Current Pointer". If that command is missing, install or enable the Selection Bridge extension.'
+      'In the intended VS Code window, run "Selection Bridge: Show Current Pointer". If that window is remote, open its integrated terminal, run `npx skills add aqzi/SelectionBridge` there, and start a new agent session there. If the command is missing, install or enable Selection Bridge in that VS Code window.'
     );
   }
 
@@ -100,7 +114,7 @@ function selectInstance(instances, options = {}) {
       );
     }
 
-    const remoteFailure = unsupportedRemoteWorkspaceFailure(instances, cwd);
+    const remoteFailure = remoteWorkspacePathFailure(instances, cwd);
     if (remoteFailure) {
       return remoteFailure;
     }
@@ -118,7 +132,7 @@ function selectInstance(instances, options = {}) {
   }
 
   if (matches.length === 0) {
-    const remoteFailure = unsupportedRemoteWorkspaceFailure(instances, cwd);
+    const remoteFailure = remoteWorkspacePathFailure(instances, cwd);
     if (remoteFailure) {
       return remoteFailure;
     }
@@ -171,7 +185,7 @@ function summarizeMatches(matches) {
   }));
 }
 
-function unsupportedRemoteWorkspaceFailure(instances, cwd) {
+function remoteWorkspacePathFailure(instances, cwd) {
   const remoteInstances = instances.filter((instance) => {
     const folders = instance.workspaceFolders || [];
     return folders.length > 0 && folders.every((folder) => !folder.path && isRemoteUri(folder.uri));
@@ -182,15 +196,43 @@ function unsupportedRemoteWorkspaceFailure(instances, cwd) {
   }
 
   return failure(
-    'unsupported_remote_workspace',
-    'The active VS Code workspace is remote, which Selection Bridge does not support.',
+    'remote_extension_wrong_host',
+    'Selection Bridge found a remote VS Code workspace, but the extension did not provide a filesystem path from the remote extension host.',
     { cwd, activeInstances: remoteInstances.map(summarizeInstance) },
-    `Open the host checkout locally in VS Code and start Codex from that local workspace instead of ${cwd}.`
+    'Update Selection Bridge in the target remote VS Code window, make sure it is installed on the remote side rather than only locally, and run "Developer: Reload Window" from the Command Palette. Then start a new agent session in that window\'s integrated terminal.'
   );
 }
 
 function isRemoteUri(uri) {
   return typeof uri === 'string' && !uri.startsWith('file:');
+}
+
+function isLikelyRemoteTerminal(env) {
+  return Boolean(
+    env.SSH_CONNECTION ||
+      env.SSH_CLIENT ||
+      env.SSH_TTY ||
+      env.VSCODE_AGENT_FOLDER ||
+      env.CODESPACES ||
+      env.WSL_DISTRO_NAME
+  );
+}
+
+function summarizeTerminalEnvironment(env) {
+  const indicators = [
+    'SSH_CONNECTION',
+    'SSH_CLIENT',
+    'SSH_TTY',
+    'VSCODE_AGENT_FOLDER',
+    'CODESPACES',
+    'WSL_DISTRO_NAME'
+  ].filter((name) => Boolean(env[name]));
+
+  return {
+    home: env.HOME || os.homedir(),
+    ...(env.USER || env.USERNAME ? { user: env.USER || env.USERNAME } : {}),
+    remoteIndicators: indicators
+  };
 }
 
 function workspaceMismatchRecovery(cwd, instances) {
@@ -389,9 +431,9 @@ function requestFailure(
   if (code === 'ECONNREFUSED' || code === 'ECONNRESET' || code === 'EPIPE') {
     return failure(
       'connection_refused_after_retry',
-      `The matching VS Code window ${quoteForMessage(instanceName)} was found, but its local Selection Bridge server did not accept the connection after an automatic retry.`,
+      `The matching VS Code window ${quoteForMessage(instanceName)} was found, but its co-located Selection Bridge server did not accept the connection after an automatic retry.`,
       details,
-      `Run "Developer: Reload Window" in the VS Code window for ${quoteForMessage(instanceName)}, then repeat the request.`
+      `Run "Developer: Reload Window" in the VS Code window for ${quoteForMessage(instanceName)}, then repeat the request.${remoteTerminalRecoverySuffix(instance)}`
     );
   }
 
@@ -401,7 +443,7 @@ function requestFailure(
       'connection_timeout_after_retry',
       `The Selection Bridge extension in ${quoteForMessage(instanceName)} did not answer within ${effectiveTimeout}ms after an automatic retry.`,
       details,
-      `Run "Developer: Reload Window" in the VS Code window for ${quoteForMessage(instanceName)}, then repeat the request.`
+      `Run "Developer: Reload Window" in the VS Code window for ${quoteForMessage(instanceName)}, then repeat the request.${remoteTerminalRecoverySuffix(instance)}`
     );
   }
 
@@ -429,6 +471,21 @@ function registryReadFailure(error, options) {
     `The Selection Bridge registry at ${instancesDir} could not be read: ${errorMessage(error)}`,
     { instancesDir },
     `Ensure the current terminal user can read ${instancesDir}, then repeat the request.`
+  );
+}
+
+function remoteTerminalRecoverySuffix(instance) {
+  if (!isRemoteInstance(instance)) {
+    return '';
+  }
+
+  return ' If it still fails, start a new agent session in a terminal opened from that same remote VS Code window; the current terminal is not sharing the extension host\'s loopback network.';
+}
+
+function isRemoteInstance(instance) {
+  return Boolean(
+    instance.execution?.vscodeRemoteName ||
+      (instance.workspaceFolders || []).some((folder) => isRemoteUri(folder.uri))
   );
 }
 
@@ -491,21 +548,21 @@ function validatePointer(pointer, fileSystem) {
     );
   }
 
-  if (document.scheme && document.scheme !== 'file') {
-    return failure(
-      'unsupported_remote_workspace',
-      'The selected document is in a remote workspace, which Selection Bridge does not support.',
-      { uri: document.uri, scheme: document.scheme },
-      'Open the host checkout locally in VS Code and start Codex from that local workspace, then repeat the request.'
-    );
-  }
-
   if (!document.path) {
+    if (isRemoteDocument(document)) {
+      return failure(
+        'remote_document_path_unavailable',
+        'The remote Selection Bridge extension did not provide a filesystem path for the selected document.',
+        { uri: document.uri, scheme: document.scheme },
+        'Update Selection Bridge in the target remote VS Code window, make sure it is installed on the remote side, and run "Developer: Reload Window" from the Command Palette. Then repeat the request from that window\'s integrated terminal.'
+      );
+    }
+
     return failure(
-      'document_path_unavailable',
-      'The Selection Bridge extension did not provide a local path for the active document.',
+      'unsupported_document_scheme',
+      `Selection Bridge cannot read the active document scheme ${quoteForMessage(document.scheme || 'unknown')} from disk.`,
       { uri: document.uri, scheme: document.scheme },
-      'Focus a saved file inside the current local VS Code workspace, select the relevant code, and then repeat the request.'
+      'Focus a saved file in a local or remote VS Code workspace, select the relevant code, and then repeat the request.'
     );
   }
 
@@ -532,6 +589,15 @@ function validatePointer(pointer, fileSystem) {
   } catch (error) {
     const systemCode = error?.code;
     if (systemCode === 'ENOENT') {
+      if (isRemoteDocument(document)) {
+        return failure(
+          'remote_file_not_visible',
+          `The terminal cannot see the remote selected file ${quoteForMessage(document.path)}.`,
+          { path: document.path, uri: document.uri },
+          `Open a new terminal from the target remote VS Code window and run: \`test -f ${shellQuote(document.path)}\`. If it succeeds, start a new agent session in that terminal because the current agent is in a different environment. If it fails, restore or save ${quoteForMessage(document.path)} in VS Code.`
+        );
+      }
+
       return failure(
         'selected_file_missing',
         `The selected file ${quoteForMessage(document.path)} no longer exists on disk.`,
@@ -549,6 +615,11 @@ function validatePointer(pointer, fileSystem) {
   }
 
   return undefined;
+}
+
+function isRemoteDocument(document) {
+  return document.scheme === 'vscode-remote' ||
+    (typeof document.uri === 'string' && document.uri.startsWith('vscode-remote:'));
 }
 
 async function main(argv = process.argv.slice(2), io = process) {
@@ -706,6 +777,7 @@ function summarizeInstance(instance) {
     workspaceName: safe.workspaceName,
     workspaceFolders: safe.workspaceFolders || [],
     activeDocumentPath: safe.activeDocumentPath,
+    execution: safe.execution,
     lastPointerKind: safe.lastPointerKind,
     lastSelectionCapturedAt: safe.lastSelectionCapturedAt,
     updatedAt: safe.updatedAt

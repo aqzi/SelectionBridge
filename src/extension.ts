@@ -1,9 +1,15 @@
 import * as crypto from 'node:crypto';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 import * as vscode from 'vscode';
 
-import { createPointerSnapshot, type PointerSnapshot } from './pointer';
+import {
+  createPointerSnapshot,
+  getExecutionFileSystemPath,
+  serializeWorkspaceFolder,
+  type PointerSnapshot
+} from './pointer';
 import {
   cleanupStaleRegistryFiles,
   REGISTRY_SCHEMA_VERSION,
@@ -26,6 +32,7 @@ interface RuntimeState {
   server: PointerServer;
   output: vscode.OutputChannel;
   heartbeat: NodeJS.Timeout;
+  extensionHostKind: 'ui' | 'workspace';
 }
 
 export interface SelectionBridgeContext {
@@ -73,6 +80,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Select
     registryWriter,
     server,
     output,
+    extensionHostKind:
+      context.extension.extensionKind === vscode.ExtensionKind.Workspace ? 'workspace' : 'ui',
     heartbeat: setInterval(() => writeRegistry(), HEARTBEAT_INTERVAL_MS)
   };
 
@@ -178,17 +187,19 @@ function buildRegistryEntry(current: RuntimeState): RegistryEntry {
     lastSelectionCapturedAt: current.pointer.capturedAt,
     createdAt: current.createdAt,
     updatedAt: new Date().toISOString(),
-    ...(vscodeEnv.sessionId ? { vscodeSessionId: vscodeEnv.sessionId } : {})
+    ...(vscodeEnv.sessionId ? { vscodeSessionId: vscodeEnv.sessionId } : {}),
+    execution: {
+      hostname: os.hostname(),
+      home: os.homedir(),
+      platform: process.platform,
+      extensionHostKind: current.extensionHostKind,
+      ...(vscode.env.remoteName ? { vscodeRemoteName: vscode.env.remoteName } : {})
+    }
   };
 }
 
 function serializeWorkspaceFolders(): RegistryWorkspaceFolder[] {
-  return (vscode.workspace.workspaceFolders || []).map((folder) => ({
-    name: folder.name,
-    uri: folder.uri.toString(),
-    ...(folder.uri.scheme === 'file' ? { path: folder.uri.fsPath } : {}),
-    index: folder.index
-  }));
+  return (vscode.workspace.workspaceFolders || []).map(serializeWorkspaceFolder);
 }
 
 async function showCurrentPointer(): Promise<void> {
@@ -246,18 +257,25 @@ function getContext(resource?: vscode.Uri): SelectionBridgeContext | undefined {
 function resolveLaunchWorkspace(resource: vscode.Uri | undefined): { path: string; name: string } | undefined {
   const candidateUri = resource || vscode.window.activeTextEditor?.document.uri;
   const workspaceFolder = candidateUri ? vscode.workspace.getWorkspaceFolder(candidateUri) : undefined;
+  const workspacePath = workspaceFolder
+    ? getExecutionFileSystemPath(workspaceFolder.uri)
+    : undefined;
 
-  if (workspaceFolder?.uri.scheme === 'file') {
-    return { path: workspaceFolder.uri.fsPath, name: workspaceFolder.name };
+  if (workspaceFolder && workspacePath) {
+    return { path: workspacePath, name: workspaceFolder.name };
   }
 
-  const workspaceFolders = vscode.workspace.workspaceFolders?.filter((folder) => folder.uri.scheme === 'file') || [];
+  const workspaceFolders = (vscode.workspace.workspaceFolders || []).flatMap((folder) => {
+    const folderPath = getExecutionFileSystemPath(folder.uri);
+    return folderPath ? [{ folder, path: folderPath }] : [];
+  });
   if (workspaceFolders.length === 1) {
-    return { path: workspaceFolders[0].uri.fsPath, name: workspaceFolders[0].name };
+    return { path: workspaceFolders[0].path, name: workspaceFolders[0].folder.name };
   }
 
-  if (candidateUri?.scheme === 'file') {
-    const filePath = candidateUri.fsPath;
+  const candidatePath = candidateUri ? getExecutionFileSystemPath(candidateUri) : undefined;
+  if (candidatePath) {
+    const filePath = candidatePath;
     return { path: path.dirname(filePath), name: path.basename(path.dirname(filePath)) };
   }
 

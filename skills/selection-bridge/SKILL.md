@@ -1,13 +1,13 @@
 ---
 name: selection-bridge
-description: Resolve references such as "this", "this selection", "the selected code", "what I highlighted", or "the current VS Code selection" when Codex is running in a terminal outside VS Code. Use this skill before interpreting deictic references to editor selections; it queries the local Selection Bridge VS Code extension for file/range metadata only, then reads the referenced saved file content from disk if needed.
+description: Resolve references such as "this", "this selection", "the selected code", "what I highlighted", or "the current VS Code selection" when Codex is running in a terminal beside a local or remote VS Code workspace. Use this skill before interpreting deictic references to editor selections; it queries the co-located Selection Bridge VS Code extension for file/range metadata only, then reads the referenced saved file content from disk if needed.
 ---
 
 # Selection Bridge
 
 ## Overview
 
-Use this skill to resolve editor-relative language from a terminal session. The paired VS Code extension returns a pointer to the selected location only: file URI/path, workspace folder, line/character ranges, selection direction, dirty state, and timestamps. It never returns selected text.
+Use this skill to resolve editor-relative language from a terminal session. The paired VS Code extension returns a pointer to the selected location only: file URI/path, workspace folder, line/character ranges, selection direction, dirty state, and timestamps. It never returns selected text. For a remote workspace, run the agent and install this skill in the same remote execution environment and user account as the workspace extension. A terminal opened from that remote VS Code window is the reliable default.
 
 ## Workflow
 
@@ -35,4 +35,5 @@ Use this skill to resolve editor-relative language from a terminal session. The 
 - Treat all line and character coordinates as zero-based.
 - Prefer the resolver's cwd-based match. Honor `SELECTION_BRIDGE_INSTANCE` when it is set.
 - Do not guess across multiple matching VS Code windows.
+- Treat `pointer.document.path` and workspace folder paths as paths in the extension host's execution environment. A remote agent in the same environment can read them directly.
 - Use normal file-reading tools after resolving the pointer; the extension is only the locator.

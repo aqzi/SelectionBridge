@@ -28,14 +28,16 @@ export interface SerializedDocument {
   isDirty: boolean;
   isUntitled: boolean;
   lineCount: number;
-  workspaceFolder?: {
-    name: string;
-    uri: string;
-    path?: string;
-    remotePath?: string;
-    localPath?: string;
-    index: number;
-  };
+  workspaceFolder?: SerializedWorkspaceFolder;
+}
+
+export interface SerializedWorkspaceFolder {
+  name: string;
+  uri: string;
+  path?: string;
+  remotePath?: string;
+  localPath?: string;
+  index: number;
 }
 
 export interface PointerSnapshot {
@@ -52,6 +54,8 @@ type UriLike = Pick<vscode.Uri, 'scheme' | 'toString'> & {
   fsPath?: string;
   path?: string;
 };
+
+const DISK_BACKED_URI_SCHEMES = new Set(['file', 'vscode-remote']);
 
 type TextDocumentLike = Pick<
   vscode.TextDocument,
@@ -111,11 +115,37 @@ export function serializeSelection(selection: SelectionLike): SerializedSelectio
   };
 }
 
+/**
+ * Return the path as seen by the extension host. Workspace extensions run on the
+ * same machine as the workspace, so this path is also readable by a terminal
+ * agent running in that workspace environment.
+ */
+export function getExecutionFileSystemPath(uri: UriLike): string | undefined {
+  if (!DISK_BACKED_URI_SCHEMES.has(uri.scheme)) {
+    return undefined;
+  }
+
+  return uri.fsPath || undefined;
+}
+
+export function serializeWorkspaceFolder(folder: WorkspaceFolderLike): SerializedWorkspaceFolder {
+  const executionPath = getExecutionFileSystemPath(folder.uri);
+  const remotePath = folder.uri.scheme !== 'file' ? folder.uri.path : undefined;
+
+  return {
+    name: folder.name,
+    uri: folder.uri.toString(),
+    ...(executionPath ? { path: executionPath } : {}),
+    ...(remotePath ? { remotePath } : {}),
+    index: folder.index
+  };
+}
+
 export function serializeDocument(
   document: TextDocumentLike,
   workspaceFolder: WorkspaceFolderLike | undefined
 ): SerializedDocument {
-  const documentPath = document.uri.scheme === 'file' ? document.uri.fsPath : undefined;
+  const documentPath = getExecutionFileSystemPath(document.uri);
   const documentRemotePath = document.uri.scheme !== 'file' ? document.uri.path : undefined;
 
   return {
@@ -131,17 +161,7 @@ export function serializeDocument(
     lineCount: document.lineCount,
     ...(workspaceFolder
       ? {
-          workspaceFolder: {
-            name: workspaceFolder.name,
-            uri: workspaceFolder.uri.toString(),
-            ...(workspaceFolder.uri.scheme === 'file' && workspaceFolder.uri.fsPath
-              ? { path: workspaceFolder.uri.fsPath }
-              : {}),
-            ...(workspaceFolder.uri.scheme !== 'file' && workspaceFolder.uri.path
-              ? { remotePath: workspaceFolder.uri.path }
-              : {}),
-            index: workspaceFolder.index
-          }
+          workspaceFolder: serializeWorkspaceFolder(workspaceFolder)
         }
       : {})
   };
