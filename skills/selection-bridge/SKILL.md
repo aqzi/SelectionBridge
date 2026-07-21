@@ -21,7 +21,7 @@ Use this skill to resolve editor-relative language from a terminal session. The 
 
 2. If the resolver returns `ok: false`, report the error plainly. For `ambiguous_workspace`, ask the user to run `Selection Bridge: Copy Bind Command` in the intended VS Code window and paste the exported `SELECTION_BRIDGE_INSTANCE` command into the terminal.
 
-3. If `pointer.kind` is `selection`, read the referenced saved file from disk and use the returned zero-based ranges to extract the selected code locally. Prefer `pointer.document.path`; in devcontainers this is the mapped host path when `selectionBridge.devcontainer.localWorkspaceFolder` or `selectionBridge.pathMappings` is configured. Respect multiple selections in order. Answer the user's question directly from the selected content; do not preface the answer with file paths, line numbers, or a statement that a selection was resolved unless those details are directly relevant to the answer.
+3. If `pointer.kind` is `selection`, read `pointer.document.path` from disk and use the returned zero-based ranges to extract the selected code locally. Respect multiple selections in order. Answer the user's question directly from the selected content; do not preface the answer with file paths, line numbers, or a statement that a selection was resolved unless those details are directly relevant to the answer.
 
 4. If `pointer.kind` is `cursor`, use the cursor location only when the user's request can reasonably refer to the nearby symbol or block. Otherwise ask the user to select text.
 
@@ -34,7 +34,5 @@ Use this skill to resolve editor-relative language from a terminal session. The 
 - Do not say where the selected text came from unless the user asks or location is necessary for the answer.
 - Treat all line and character coordinates as zero-based.
 - Prefer the resolver's cwd-based match. Honor `SELECTION_BRIDGE_INSTANCE` when it is set.
-- If `SELECTION_BRIDGE_PORT` and `SELECTION_BRIDGE_TOKEN` are set, the resolver can run inside a devcontainer and connect directly to `SELECTION_BRIDGE_HOST`, usually `host.docker.internal`.
 - Do not guess across multiple matching VS Code windows.
 - Use normal file-reading tools after resolving the pointer; the extension is only the locator.
-- If `pointer.document.remotePath` exists without a mapped `path`, explain that the devcontainer needs a local mapping before exact selected file reads can work from Ghostty.

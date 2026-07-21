@@ -4,33 +4,26 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const manifest = require('../package.json');
-const devcontainer = require('../.devcontainer/devcontainer.json');
 
-test('shows the chat terminal toolbar button by default', () => {
-  const setting =
-    manifest.contributes.configuration.properties[
-      'selectionBridge.chatTerminal.button.enabled'
-    ];
-  const menu = manifest.contributes.menus['editor/title'].find(
-    (item) => item.command === 'selectionBridge.openChatTerminal'
+test('contributes only the public Selection Bridge commands', () => {
+  assert.deepEqual(
+    manifest.contributes.commands.map((item) => item.command),
+    [
+      'selectionBridge.showCurrentPointer',
+      'selectionBridge.copyBindCommand',
+      'selectionBridge.resetInstanceId'
+    ]
   );
-
-  assert.equal(setting.type, 'boolean');
-  assert.equal(setting.default, true);
-  assert.equal(menu.when, 'config.selectionBridge.chatTerminal.button.enabled');
+  assert.equal(manifest.contributes.menus, undefined);
 });
 
-test('uses direct startup commands in the devcontainer without a selector', () => {
-  const settings = devcontainer.customizations.vscode.settings;
-  const selectorSettings = Object.keys(settings).filter((key) =>
-    key.startsWith('selectionBridge.chatTerminal.selector')
-  );
-  const startupCommands = settings['selectionBridge.chatTerminal.startupCommands'];
+test('does not contribute configuration settings', () => {
+  assert.equal(manifest.contributes.configuration, undefined);
+});
 
-  assert.deepEqual(selectorSettings, []);
-  assert.equal(startupCommands.length, 1);
-  assert.match(startupCommands[0], /tmux new-session -A/);
-  assert.doesNotMatch(startupCommands[0], /-s codex/);
-  assert.match(startupCommands[0], /devcontainer-exec\.sh/);
-  assert.match(startupCommands[0], /codex/);
+test('does not publish private workflow files', () => {
+  assert.equal(manifest.private, false);
+  assert.equal(manifest.files.includes('private'), false);
+  assert.equal(manifest.files.includes('scripts'), false);
+  assert.equal(manifest.files.includes('out'), false);
 });

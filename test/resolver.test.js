@@ -7,8 +7,6 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
-  applyPointerPathMappings,
-  getDirectInstanceFromEnv,
   isPathInside,
   loadInstances,
   parseArgs,
@@ -70,57 +68,6 @@ test('explicit instance id overrides cwd matching', () => {
   assert.equal(result.ok, true);
   assert.equal(result.instance.id, 'two');
   assert.equal(result.selectedBy, 'instance');
-});
-
-test('direct env connection overrides registry matching for containers', () => {
-  const result = selectInstance([], {
-    env: {
-      SELECTION_BRIDGE_INSTANCE: 'direct-id',
-      SELECTION_BRIDGE_HOST: 'host.docker.internal',
-      SELECTION_BRIDGE_PORT: '4567',
-      SELECTION_BRIDGE_TOKEN: 'secret'
-    },
-    cwd: '/workspaces/app'
-  });
-
-  assert.equal(result.ok, true);
-  assert.equal(result.selectedBy, 'env');
-  assert.equal(result.instance.id, 'direct-id');
-  assert.equal(result.instance.host, 'host.docker.internal');
-  assert.equal(result.instance.port, 4567);
-});
-
-test('direct env connection reports partial configuration', () => {
-  const result = getDirectInstanceFromEnv({
-    SELECTION_BRIDGE_PORT: '4567'
-  });
-
-  assert.equal(result.ok, false);
-  assert.equal(result.error.code, 'invalid_direct_connection');
-});
-
-test('selects a devcontainer instance whose mapped workspace contains cwd', () => {
-  const result = selectInstance(
-    [
-      {
-        ...instance('remote', []),
-        workspaceFolders: [
-          {
-            name: 'app',
-            uri: 'vscode-remote://dev-container/workspaces/app',
-            remotePath: '/workspaces/app',
-            mappedPath: '/Users/me/app',
-            localPath: '/Users/me/app',
-            index: 0
-          }
-        ]
-      }
-    ],
-    { cwd: '/Users/me/app/src' }
-  );
-
-  assert.equal(result.ok, true);
-  assert.equal(result.instance.id, 'remote');
 });
 
 test('loadInstances filters stale entries and malformed JSON', () => {
@@ -214,49 +161,6 @@ test('resolvePointer queries the selected instance and returns pointer metadata'
   assert.equal(result.instance.id, 'one');
   assert.equal('token' in result.instance, false);
   assert.deepEqual(result.pointer, pointer);
-});
-
-test('applyPointerPathMappings maps remote documents to local readable paths', () => {
-  const pointer = {
-    kind: 'selection',
-    capturedAt: '2026-07-20T10:00:00.000Z',
-    document: {
-      uri: 'vscode-remote://dev-container/workspaces/app/src/file.ts',
-      scheme: 'vscode-remote',
-      remotePath: '/workspaces/app/src/file.ts',
-      fileName: '/workspaces/app/src/file.ts',
-      isDirty: false,
-      workspaceFolder: {
-        name: 'app',
-        uri: 'vscode-remote://dev-container/workspaces/app',
-        remotePath: '/workspaces/app',
-        index: 0
-      }
-    },
-    selections: []
-  };
-
-  const instanceWithMapping = {
-    pathMappings: [
-      {
-        remotePrefix: '/workspaces/app',
-        localPrefix: '/Users/me/app'
-      }
-    ]
-  };
-  const mapped = applyPointerPathMappings(pointer, instanceWithMapping);
-
-  assert.equal(mapped.document.path, '/Users/me/app/src/file.ts');
-  assert.equal(mapped.document.localPath, '/Users/me/app/src/file.ts');
-  assert.equal(mapped.document.remotePath, '/workspaces/app/src/file.ts');
-  assert.equal(mapped.document.workspaceFolder.path, '/Users/me/app');
-
-  const mappedForContainer = applyPointerPathMappings(pointer, instanceWithMapping, {
-    cwd: '/workspaces/app'
-  });
-
-  assert.equal(mappedForContainer.document.path, '/workspaces/app/src/file.ts');
-  assert.equal(mappedForContainer.document.localPath, '/Users/me/app/src/file.ts');
 });
 
 function instance(id, workspacePaths) {

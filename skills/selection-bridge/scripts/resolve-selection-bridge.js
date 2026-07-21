@@ -46,14 +46,6 @@ function loadInstances(options = {}) {
 }
 
 function selectInstance(instances, options = {}) {
-  const directInstance = getDirectInstanceFromEnv(options.env || process.env);
-  if (directInstance.ok) {
-    return { ok: true, selectedBy: 'env', instance: directInstance.instance };
-  }
-  if (directInstance.error) {
-    return directInstance;
-  }
-
   const explicitInstanceId =
     options.instanceId || options.env?.SELECTION_BRIDGE_INSTANCE || options.env?.THIS_POINTER_INSTANCE;
 
@@ -74,7 +66,7 @@ function selectInstance(instances, options = {}) {
     .map((instance) => ({
       instance,
       matchingWorkspaceFolders: (instance.workspaceFolders || []).filter((folder) => {
-        return getWorkspaceFolderLocalPaths(folder).some((folderPath) => isPathInside(folderPath, cwd));
+        return folder.path && isPathInside(folder.path, cwd);
       })
     }))
     .filter((match) => match.matchingWorkspaceFolders.length > 0);
@@ -110,7 +102,6 @@ function requestPointer(instance, options = {}) {
     const request = http.request(
       {
         hostname: '127.0.0.1',
-        ...(instance.host ? { hostname: instance.host } : {}),
         port: instance.port,
         path: '/pointer',
         method: 'GET',
@@ -177,15 +168,14 @@ async function resolvePointer(options = {}) {
     const responseInstance = {
       ...selection.instance,
       ...(response.instance || {}),
-      token: selection.instance.token,
-      host: selection.instance.host
+      token: selection.instance.token
     };
     return {
       ok: true,
       selectedBy: selection.selectedBy,
       cwd,
       instance: sanitizeInstance(responseInstance),
-      pointer: applyPointerPathMappings(response.pointer, responseInstance, { cwd })
+      pointer: response.pointer
     };
   } catch (error) {
     return failure('query_failed', error instanceof Error ? error.message : String(error), {
@@ -321,153 +311,6 @@ function isPathInside(parentPath, childPath) {
   return child === parent || child.startsWith(parent.endsWith(path.sep) ? parent : `${parent}${path.sep}`);
 }
 
-function getWorkspaceFolderLocalPaths(folder) {
-  return [folder.path, folder.localPath, folder.mappedPath].filter(Boolean);
-}
-
-function getDirectInstanceFromEnv(env) {
-  const portValue = env.SELECTION_BRIDGE_PORT || env.THIS_POINTER_PORT;
-  const token = env.SELECTION_BRIDGE_TOKEN || env.THIS_POINTER_TOKEN;
-
-  if (!portValue && !token) {
-    return { ok: false };
-  }
-
-  if (!portValue || !token) {
-    return failure('invalid_direct_connection', 'Both SELECTION_BRIDGE_PORT and SELECTION_BRIDGE_TOKEN are required for direct connection mode.');
-  }
-
-  const port = Number.parseInt(portValue, 10);
-  if (!Number.isFinite(port) || port <= 0) {
-    return failure('invalid_direct_connection', `Invalid SELECTION_BRIDGE_PORT: ${portValue}`);
-  }
-
-  return {
-    ok: true,
-    instance: {
-      schemaVersion: 1,
-      id: env.SELECTION_BRIDGE_INSTANCE || env.THIS_POINTER_INSTANCE || 'direct',
-      host: env.SELECTION_BRIDGE_HOST || env.THIS_POINTER_HOST || '127.0.0.1',
-      port,
-      token,
-      workspaceFolders: [],
-      pathMappings: []
-    }
-  };
-}
-
-function applyPointerPathMappings(pointer, instance, options = {}) {
-  if (!pointer?.document) {
-    return pointer;
-  }
-
-  const pathMappings = instance.pathMappings || [];
-  const preferRemotePath = shouldPreferRemotePath(options.cwd, pathMappings);
-  const documentRemotePath = getDocumentRemotePath(pointer.document);
-  const mappedDocument = mapRemotePath(documentRemotePath, pathMappings);
-  const workspaceRemotePath = pointer.document.workspaceFolder?.remotePath;
-  const mappedWorkspace = mapRemotePath(workspaceRemotePath, pathMappings);
-
-  return {
-    ...pointer,
-    document: {
-      ...pointer.document,
-      ...(mappedDocument
-        ? {
-            path: preferRemotePath ? mappedDocument.remotePath : mappedDocument.localPath,
-            localPath: mappedDocument.localPath,
-            remotePath: mappedDocument.remotePath
-          }
-        : preferRemotePath && pointer.document.remotePath
-          ? { path: pointer.document.remotePath }
-          : {}),
-      ...(pointer.document.localPath && preferRemotePath && pointer.document.remotePath
-        ? { path: pointer.document.remotePath }
-        : {}),
-      ...(pointer.document.workspaceFolder && mappedWorkspace
-        ? {
-            workspaceFolder: {
-              ...pointer.document.workspaceFolder,
-              path: preferRemotePath ? mappedWorkspace.remotePath : mappedWorkspace.localPath,
-              localPath: mappedWorkspace.localPath,
-              remotePath: mappedWorkspace.remotePath
-            }
-          }
-        : {})
-    }
-  };
-}
-
-function shouldPreferRemotePath(cwd, pathMappings) {
-  if (!cwd) {
-    return false;
-  }
-
-  return pathMappings.some((mapping) => {
-    return mapping.remotePrefix && isRemotePathInside(mapping.remotePrefix, normalizeRemotePath(cwd));
-  });
-}
-
-function getDocumentRemotePath(document) {
-  if (document.remotePath) {
-    return document.remotePath;
-  }
-
-  if (document.scheme && document.scheme !== 'file' && document.fileName) {
-    return document.fileName;
-  }
-
-  if (!document.uri) {
-    return undefined;
-  }
-
-  try {
-    const parsed = new URL(document.uri);
-    return decodeURIComponent(parsed.pathname);
-  } catch {
-    return undefined;
-  }
-}
-
-function mapRemotePath(remotePath, pathMappings) {
-  if (!remotePath) {
-    return undefined;
-  }
-
-  const normalizedRemotePath = normalizeRemotePath(remotePath);
-  const mapping = [...pathMappings]
-    .filter((candidate) => candidate.remotePrefix && candidate.localPrefix)
-    .sort((left, right) => right.remotePrefix.length - left.remotePrefix.length)
-    .find((candidate) => isRemotePathInside(candidate.remotePrefix, normalizedRemotePath));
-
-  if (!mapping) {
-    return undefined;
-  }
-
-  const remotePrefix = stripTrailingSlash(normalizeRemotePath(mapping.remotePrefix));
-  const relativePath = normalizedRemotePath === remotePrefix ? '' : normalizedRemotePath.slice(remotePrefix.length + 1);
-  return {
-    remotePath: normalizedRemotePath,
-    localPath: relativePath ? path.join(mapping.localPrefix, ...relativePath.split('/')) : mapping.localPrefix,
-    mapping
-  };
-}
-
-function normalizeRemotePath(remotePath) {
-  const normalized = path.posix.normalize(remotePath.replaceAll('\\', '/'));
-  return normalized.startsWith('/') ? normalized : `/${normalized}`;
-}
-
-function isRemotePathInside(parentPath, childPath) {
-  const parent = stripTrailingSlash(normalizeRemotePath(parentPath));
-  const child = stripTrailingSlash(normalizeRemotePath(childPath));
-  return child === parent || child.startsWith(`${parent}/`);
-}
-
-function stripTrailingSlash(inputPath) {
-  return inputPath.length > 1 ? inputPath.replace(/\/+$/, '') : inputPath;
-}
-
 function normalizeForPlatform(inputPath) {
   return process.platform === 'win32' ? inputPath.toLowerCase() : inputPath;
 }
@@ -533,9 +376,6 @@ module.exports = {
   parseArgs,
   normalizePath,
   isPathInside,
-  applyPointerPathMappings,
-  getDirectInstanceFromEnv,
-  mapRemotePath,
   sanitizeInstance,
   summarizeInstance,
   main

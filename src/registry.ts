@@ -10,16 +10,7 @@ export interface RegistryWorkspaceFolder {
   name: string;
   uri: string;
   path?: string;
-  remotePath?: string;
-  localPath?: string;
-  mappedPath?: string;
   index: number;
-}
-
-export interface RegistryPathMapping {
-  remotePrefix: string;
-  localPrefix: string;
-  source?: 'configured' | 'localWorkspaceFolder';
 }
 
 export interface RegistryEntry {
@@ -30,12 +21,8 @@ export interface RegistryEntry {
   pid: number;
   workspaceName?: string;
   workspaceFolders: RegistryWorkspaceFolder[];
-  pathMappings: RegistryPathMapping[];
-  remoteName?: string;
   activeDocumentUri?: string;
   activeDocumentPath?: string;
-  activeDocumentRemotePath?: string;
-  activeDocumentLocalPath?: string;
   lastPointerKind: PointerSnapshot['kind'];
   lastSelectionCapturedAt: string;
   createdAt: string;

@@ -1,16 +1,8 @@
 import * as crypto from 'node:crypto';
-import { spawn } from 'node:child_process';
 import * as path from 'node:path';
 
 import * as vscode from 'vscode';
 
-import { buildChatTerminalLaunch, type ChatTerminalConfig } from './chatTerminal';
-import {
-  buildEffectivePathMappings,
-  inferDevcontainerHostPathFromAuthority,
-  mapRemotePath,
-  type PathMapping
-} from './pathMapping';
 import { createPointerSnapshot, type PointerSnapshot } from './pointer';
 import {
   cleanupStaleRegistryFiles,
@@ -36,14 +28,27 @@ interface RuntimeState {
   heartbeat: NodeJS.Timeout;
 }
 
-interface PathMappingConfig {
-  pathMappings: readonly Partial<PathMapping>[];
-  localWorkspaceFolder: string;
+export interface SelectionBridgeContext {
+  workspace: {
+    path: string;
+    name: string;
+  };
+  bridge: {
+    instanceId: string;
+    host: string;
+    port: number;
+    token: string;
+  };
+}
+
+export interface SelectionBridgeApi {
+  version: 1;
+  getContext(resource?: vscode.Uri): SelectionBridgeContext | undefined;
 }
 
 let runtime: RuntimeState | undefined;
 
-export async function activate(context: vscode.ExtensionContext): Promise<void> {
+export async function activate(context: vscode.ExtensionContext): Promise<SelectionBridgeApi> {
   cleanupStaleRegistryFiles(STALE_REGISTRY_MAX_AGE_MS);
 
   const instanceId = crypto.randomUUID();
@@ -98,13 +103,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('selectionBridge.showCurrentPointer', showCurrentPointer),
     vscode.commands.registerCommand('selectionBridge.copyBindCommand', copyBindCommand),
     vscode.commands.registerCommand('selectionBridge.resetInstanceId', resetInstanceId),
-    vscode.commands.registerCommand('selectionBridge.openChatTerminal', openChatTerminal),
     {
       dispose: () => {
         void deactivate();
       }
     }
   );
+
+  return {
+    version: 1,
+    getContext
+  };
 }
 
 export async function deactivate(): Promise<void> {
@@ -122,19 +131,16 @@ export async function deactivate(): Promise<void> {
 }
 
 function updatePointer(editor: vscode.TextEditor | undefined): void {
-  requireRuntime().pointer = applyPathMappingsToPointer(
-    createPointerSnapshot(editor, getWorkspaceFolder(editor?.document.uri)),
-    getEffectivePathMappings()
+  requireRuntime().pointer = createPointerSnapshot(
+    editor,
+    getWorkspaceFolder(editor?.document.uri)
   );
   writeRegistry();
 }
 
 function snapshotActiveEditor(): PointerSnapshot {
   const editor = vscode.window.activeTextEditor;
-  return applyPathMappingsToPointer(
-    createPointerSnapshot(editor, getWorkspaceFolder(editor?.document.uri)),
-    getEffectivePathMappings()
-  );
+  return createPointerSnapshot(editor, getWorkspaceFolder(editor?.document.uri));
 }
 
 function getWorkspaceFolder(uri: vscode.Uri | undefined): vscode.WorkspaceFolder | undefined {
@@ -157,7 +163,6 @@ function writeRegistry(): void {
 function buildRegistryEntry(current: RuntimeState): RegistryEntry {
   const activeDocument = current.pointer.document;
   const vscodeEnv = vscode.env as typeof vscode.env & { sessionId?: string };
-  const effectivePathMappings = getEffectivePathMappings();
 
   return {
     schemaVersion: REGISTRY_SCHEMA_VERSION,
@@ -166,13 +171,9 @@ function buildRegistryEntry(current: RuntimeState): RegistryEntry {
     token: current.token,
     pid: process.pid,
     ...(vscode.workspace.name ? { workspaceName: vscode.workspace.name } : {}),
-    workspaceFolders: serializeWorkspaceFolders(effectivePathMappings),
-    pathMappings: effectivePathMappings,
-    ...(vscode.env.remoteName ? { remoteName: vscode.env.remoteName } : {}),
+    workspaceFolders: serializeWorkspaceFolders(),
     ...(activeDocument?.uri ? { activeDocumentUri: activeDocument.uri } : {}),
     ...(activeDocument?.path ? { activeDocumentPath: activeDocument.path } : {}),
-    ...(activeDocument?.remotePath ? { activeDocumentRemotePath: activeDocument.remotePath } : {}),
-    ...(activeDocument?.localPath ? { activeDocumentLocalPath: activeDocument.localPath } : {}),
     lastPointerKind: current.pointer.kind,
     lastSelectionCapturedAt: current.pointer.capturedAt,
     createdAt: current.createdAt,
@@ -181,30 +182,13 @@ function buildRegistryEntry(current: RuntimeState): RegistryEntry {
   };
 }
 
-function serializeWorkspaceFolders(pathMappings: readonly PathMapping[]): RegistryWorkspaceFolder[] {
+function serializeWorkspaceFolders(): RegistryWorkspaceFolder[] {
   return (vscode.workspace.workspaceFolders || []).map((folder) => ({
     name: folder.name,
     uri: folder.uri.toString(),
     ...(folder.uri.scheme === 'file' ? { path: folder.uri.fsPath } : {}),
-    ...(folder.uri.scheme !== 'file' ? { remotePath: folder.uri.path } : {}),
-    ...mappedWorkspaceFolderPaths(folder.uri, pathMappings),
     index: folder.index
   }));
-}
-
-function mappedWorkspaceFolderPaths(
-  uri: vscode.Uri,
-  pathMappings: readonly PathMapping[]
-): Pick<RegistryWorkspaceFolder, 'localPath' | 'mappedPath'> {
-  if (uri.scheme === 'file') {
-    return {
-      localPath: uri.fsPath,
-      mappedPath: uri.fsPath
-    };
-  }
-
-  const mapped = mapRemotePath(uri.path, pathMappings);
-  return mapped ? { localPath: mapped.localPath, mappedPath: mapped.localPath } : {};
 }
 
 async function showCurrentPointer(): Promise<void> {
@@ -240,82 +224,31 @@ async function resetInstanceId(): Promise<void> {
   vscode.window.showInformationMessage('Reset Selection Bridge instance id and copied the new bind command.');
 }
 
-async function openChatTerminal(resource?: vscode.Uri): Promise<void> {
+function getContext(resource?: vscode.Uri): SelectionBridgeContext | undefined {
   const current = requireRuntime();
-  const workspace = resolveLaunchWorkspace(resource, getEffectivePathMappings());
+  const workspace = resolveLaunchWorkspace(resource);
 
   if (!workspace) {
-    vscode.window.showErrorMessage(
-      'Selection Bridge could not find a local workspace folder for this editor. For devcontainers, set selectionBridge.devcontainer.localWorkspaceFolder or selectionBridge.pathMappings.'
-    );
-    return;
+    return undefined;
   }
-
-  const config = readChatTerminalConfig();
-  const launch = buildChatTerminalLaunch({
-    config,
-    workspaceFolder: workspace.path,
-    workspaceName: workspace.name,
-    instanceId: current.instanceId,
-    port: current.port,
-    token: current.token,
-    platform: process.platform,
-    env: process.env
-  });
-
-  current.output.appendLine(`Launching chat terminal: ${launch.executable} ${launch.args.join(' ')}`);
-
-  try {
-    const child = spawn(launch.executable, launch.args, {
-      cwd: launch.cwd,
-      detached: true,
-      stdio: 'ignore',
-      env: {
-        ...process.env,
-        ...launch.env
-      }
-    });
-
-    child.once('error', (error) => {
-      vscode.window.showErrorMessage(`Selection Bridge failed to launch terminal: ${error.message}`);
-    });
-    child.unref();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    vscode.window.showErrorMessage(`Selection Bridge failed to launch terminal: ${message}`);
-  }
-}
-
-function readChatTerminalConfig(): ChatTerminalConfig {
-  const config = vscode.workspace.getConfiguration('selectionBridge.chatTerminal');
 
   return {
-    executable: config.get<string>('executable', ''),
-    args: config.get<string[]>('args', []),
-    startupCommands: config.get<string[]>('startupCommands', []),
-    tmuxSessionName: config.get<string>('tmuxSessionName', ''),
-    shell: config.get<string>('shell', ''),
-    keepOpen: config.get<boolean>('keepOpen', true),
-    extraEnv: config.get<Record<string, string>>('extraEnv', {})
+    workspace,
+    bridge: {
+      instanceId: current.instanceId,
+      host: '127.0.0.1',
+      port: current.port,
+      token: current.token
+    }
   };
 }
 
-function resolveLaunchWorkspace(
-  resource: vscode.Uri | undefined,
-  pathMappings: readonly PathMapping[]
-): { path: string; name: string } | undefined {
+function resolveLaunchWorkspace(resource: vscode.Uri | undefined): { path: string; name: string } | undefined {
   const candidateUri = resource || vscode.window.activeTextEditor?.document.uri;
   const workspaceFolder = candidateUri ? vscode.workspace.getWorkspaceFolder(candidateUri) : undefined;
 
   if (workspaceFolder?.uri.scheme === 'file') {
     return { path: workspaceFolder.uri.fsPath, name: workspaceFolder.name };
-  }
-
-  if (workspaceFolder && workspaceFolder.uri.scheme !== 'file') {
-    const mapped = mapRemotePath(workspaceFolder.uri.path, pathMappings);
-    if (mapped) {
-      return { path: mapped.localPath, name: workspaceFolder.name };
-    }
   }
 
   const workspaceFolders = vscode.workspace.workspaceFolders?.filter((folder) => folder.uri.scheme === 'file') || [];
@@ -329,75 +262,6 @@ function resolveLaunchWorkspace(
   }
 
   return undefined;
-}
-
-function getEffectivePathMappings(): PathMapping[] {
-  const config = readPathMappingConfig();
-  const remoteWorkspaceFolders = (vscode.workspace.workspaceFolders || []).filter((folder) => folder.uri.scheme !== 'file');
-  const inferredLocalWorkspaceFolder = inferLocalWorkspaceFolder(remoteWorkspaceFolders.map((folder) => folder.uri.authority));
-
-  return buildEffectivePathMappings({
-    configuredMappings: config.pathMappings,
-    localWorkspaceFolder: config.localWorkspaceFolder,
-    inferredLocalWorkspaceFolder,
-    remoteWorkspaceFolders: remoteWorkspaceFolders.map((folder) => folder.uri.path),
-    env: process.env
-  });
-}
-
-function inferLocalWorkspaceFolder(remoteAuthorities: readonly string[]): string | undefined {
-  const inferred = new Set(
-    remoteAuthorities
-      .map((authority) => inferDevcontainerHostPathFromAuthority(authority))
-      .filter((hostPath): hostPath is string => Boolean(hostPath))
-  );
-
-  return inferred.size === 1 ? [...inferred][0] : undefined;
-}
-
-function readPathMappingConfig(): PathMappingConfig {
-  const rootConfig = vscode.workspace.getConfiguration('selectionBridge');
-  const devcontainerConfig = vscode.workspace.getConfiguration('selectionBridge.devcontainer');
-
-  return {
-    pathMappings: rootConfig.get<Partial<PathMapping>[]>('pathMappings', []),
-    localWorkspaceFolder: devcontainerConfig.get<string>('localWorkspaceFolder', '')
-  };
-}
-
-function applyPathMappingsToPointer(pointer: PointerSnapshot, pathMappings: readonly PathMapping[]): PointerSnapshot {
-  if (!pointer.document) {
-    return pointer;
-  }
-
-  const documentRemotePath = pointer.document.remotePath || (pointer.document.scheme !== 'file' ? pointer.document.fileName : undefined);
-  const mappedDocument = mapRemotePath(documentRemotePath, pathMappings);
-  const workspaceRemotePath = pointer.document.workspaceFolder?.remotePath;
-  const mappedWorkspace = mapRemotePath(workspaceRemotePath, pathMappings);
-
-  return {
-    ...pointer,
-    document: {
-      ...pointer.document,
-      ...(mappedDocument
-        ? {
-            path: mappedDocument.localPath,
-            localPath: mappedDocument.localPath,
-            remotePath: mappedDocument.remotePath
-          }
-        : {}),
-      ...(pointer.document.workspaceFolder && mappedWorkspace
-        ? {
-            workspaceFolder: {
-              ...pointer.document.workspaceFolder,
-              path: mappedWorkspace.localPath,
-              localPath: mappedWorkspace.localPath,
-              remotePath: mappedWorkspace.remotePath
-            }
-          }
-        : {})
-    }
-  };
 }
 
 function requireRuntime(): RuntimeState {

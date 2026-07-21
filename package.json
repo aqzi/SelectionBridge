@@ -4,7 +4,7 @@
   "description": "Expose VS Code selection locations to terminal-based coding agents without sending selected text.",
   "version": "0.0.1",
   "publisher": "local",
-  "private": true,
+  "private": false,
   "license": "MIT",
   "engines": {
     "vscode": "^1.90.0"
@@ -21,8 +21,10 @@
   "main": "./out/extension.js",
   "files": [
     "bin",
-    "out",
-    "scripts",
+    "out/extension.js",
+    "out/pointer.js",
+    "out/registry.js",
+    "out/server.js",
     "skills",
     "README.md"
   ],
@@ -42,103 +44,8 @@
       {
         "command": "selectionBridge.resetInstanceId",
         "title": "Selection Bridge: Reset Instance Id"
-      },
-      {
-        "command": "selectionBridge.openChatTerminal",
-        "title": "Selection Bridge: Open Chat Terminal",
-        "icon": "$(comment-discussion)"
       }
-    ],
-    "menus": {
-      "editor/title": [
-        {
-          "command": "selectionBridge.openChatTerminal",
-          "group": "navigation@100",
-          "when": "config.selectionBridge.chatTerminal.button.enabled"
-        }
-      ]
-    },
-    "configuration": {
-      "title": "Selection Bridge",
-      "properties": {
-        "selectionBridge.chatTerminal.button.enabled": {
-          "type": "boolean",
-          "default": true,
-          "markdownDescription": "Show the Selection Bridge chat terminal button in the editor title toolbar."
-        },
-        "selectionBridge.chatTerminal.executable": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "Executable used to open the external chat terminal. Leave empty for the platform default: `open` on macOS, `ghostty` elsewhere."
-        },
-        "selectionBridge.chatTerminal.args": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "markdownDescription": "Arguments passed to the terminal executable. Leave empty for the Ghostty default. Supports `${workspaceFolder}`, `${workspaceFolderBasename}`, `${selectionBridgeInstance}`, `${selectionBridgeHost}`, `${selectionBridgeContainerHost}`, `${selectionBridgePort}`, `${selectionBridgeToken}`, and `${startupCommand}`."
-        },
-        "selectionBridge.chatTerminal.startupCommands": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "markdownDescription": "Commands to run in the new chat terminal after exporting bridge variables including `SELECTION_BRIDGE_INSTANCE`, `SELECTION_BRIDGE_HOST`, `SELECTION_BRIDGE_PORT`, and `SELECTION_BRIDGE_TOKEN`. Example: `[\"codex\"]` or `[\"claude\"]`. For `tmux new-session` commands, the `-s` value is replaced with `selectionBridge.chatTerminal.tmuxSessionName` or the current workspace name."
-        },
-        "selectionBridge.chatTerminal.tmuxSessionName": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "Session name applied to `tmux new-session` commands in `selectionBridge.chatTerminal.startupCommands`. Leave empty to use the current workspace name."
-        },
-        "selectionBridge.chatTerminal.shell": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "Shell used for startup commands. Leave empty to use `$SHELL`, falling back to `/bin/zsh` on macOS/Linux."
-        },
-        "selectionBridge.chatTerminal.keepOpen": {
-          "type": "boolean",
-          "default": true,
-          "markdownDescription": "When true, replace the startup command process with an interactive shell after the configured commands exit."
-        },
-        "selectionBridge.chatTerminal.extraEnv": {
-          "type": "object",
-          "default": {},
-          "additionalProperties": {
-            "type": "string"
-          },
-          "markdownDescription": "Extra environment variables passed to the launcher process. `SELECTION_BRIDGE_INSTANCE` is always added."
-        },
-        "selectionBridge.devcontainer.localWorkspaceFolder": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "Local host path for the current devcontainer workspace. When exactly one remote workspace folder is open, Selection Bridge maps that remote folder to this local path for Ghostty launches and agent file reads. Supports `~`, `$VAR`, and `${VAR}`."
-        },
-        "selectionBridge.pathMappings": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "object",
-            "required": [
-              "remotePrefix",
-              "localPrefix"
-            ],
-            "properties": {
-              "remotePrefix": {
-                "type": "string",
-                "markdownDescription": "Remote/container path prefix, for example `/workspaces/my-project`."
-              },
-              "localPrefix": {
-                "type": "string",
-                "markdownDescription": "Local host path prefix, for example `/Users/me/src/my-project`. Supports `~`, `$VAR`, and `${VAR}`."
-              }
-            }
-          },
-          "markdownDescription": "Path mappings used when VS Code is connected to a remote/devcontainer workspace. Explicit mappings are best for multi-root workspaces."
-        }
-      }
-    }
+    ]
   },
   "scripts": {
     "compile": "tsc -p ./",

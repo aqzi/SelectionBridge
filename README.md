@@ -1,22 +1,30 @@
 # Selection Bridge
 
-Selection Bridge is a local VS Code extension and companion skill for terminal-based agents. It exposes where text is selected in VS Code, not the selected text itself.
+Selection Bridge connects your current VS Code selection to terminal-based agents without making you copy and paste its contents into the terminal. Copying content into a prompt makes the agent process that content before it can start working and gives it only the snippet you copied.
+
+With Selection Bridge, you can refer to "this selection" and the agent immediately receives a lightweight pointer to the correct file and range. It can read the saved content directly from your workspace together with the surrounding context it needs. The extension exposes only location metadata, not the selected text itself, and works with a companion agent skill.
 
 ## Install the Agent Skill
 
-The VS Code extension provides the selection location, while the companion skill teaches your terminal agent how to retrieve and use it. Install the skill globally so it is available in every workspace:
+The VS Code extension provides the selection location, while the companion skill teaches your terminal agent how to retrieve and use it. Start the installer with:
 
 ```bash
-npx skills add aqzi/SelectionBridge --skill selection-bridge --global
+npx skills add aqzi/SelectionBridge
 ```
 
-The installer detects supported agents and asks where to install the skill. To install it explicitly for both Codex and Claude Code:
+Follow the installer's questions to choose the skill, supported agents, and installation scope. Start a new agent session after installation. The skill is compatible with agents supported by [`npx skills`](https://github.com/vercel-labs/skills).
 
-```bash
-npx skills add aqzi/SelectionBridge --skill selection-bridge --global --agent codex --agent claude-code
-```
+## Use Selection Bridge
 
-Start a new agent session after installation. The skill is also compatible with other agents supported by [`npx skills`](https://github.com/vercel-labs/skills).
+Select code in a saved file in VS Code, then ask your terminal agent about "this selection", "the selected code", or another equivalent reference. The skill resolves the pointer, reads the selected range from disk, and can inspect the surrounding file when more context is useful.
+
+Selection Bridge intentionally does not transmit the selected text. Save the file first when you want the agent to see recent edits. The pointer reports when the active document contains unsaved changes.
+
+The extension provides these commands through the Command Palette:
+
+- `Selection Bridge: Show Current Pointer` shows the current pointer metadata.
+- `Selection Bridge: Copy Bind Command` copies an instance binding for ambiguous multi-window setups.
+- `Selection Bridge: Reset Instance Id` creates and copies a new instance binding.
 
 ## Development
 
@@ -32,7 +40,7 @@ Run the extension from VS Code with the Extension Development Host, or launch it
 code --extensionDevelopmentPath="$(pwd)"
 ```
 
-For day-to-day local use, symlink both the extension and skill into the standard user locations:
+For local use, symlink the extension and skill into their standard user locations:
 
 ```bash
 npm run install:local
@@ -46,84 +54,4 @@ With the extension running, resolve the current selection from a terminal in the
 node skills/selection-bridge/scripts/resolve-selection-bridge.js
 ```
 
-For ambiguous multi-window setups, run `Selection Bridge: Copy Bind Command` in the target VS Code window and paste the copied `export SELECTION_BRIDGE_INSTANCE=...` command into the Ghostty terminal.
-
-## Chat Terminal Button
-
-The `Selection Bridge: Open Chat Terminal` command launches Ghostty for the current workspace folder and exports `SELECTION_BRIDGE_INSTANCE` inside the new shell. Its editor title toolbar button is shown by default. Hide it in VS Code settings:
-
-```json
-{
-  "selectionBridge.chatTerminal.button.enabled": false
-}
-```
-
-Configure startup commands in VS Code settings:
-
-```json
-{
-  "selectionBridge.chatTerminal.startupCommands": ["codex"]
-}
-```
-
-Use `["claude"]` instead if that is your preferred agent. Leave the array empty to open a bound shell without starting an agent.
-
-When a startup command opens tmux with `tmux new-session -s`, Selection Bridge uses the current workspace name for the session by default. The original `-s` value is replaced, so existing commands such as `tmux new-session -A -s codex ...` automatically use the workspace name. To override it:
-
-```json
-{
-  "selectionBridge.chatTerminal.tmuxSessionName": "shared-chat"
-}
-```
-
-The default macOS launcher is equivalent to:
-
-```bash
-open -na Ghostty --args --window-save-state=never --quit-after-last-window-closed=true --working-directory=<workspace> --command=<startup shell>
-```
-
-Disabling window-state restoration prevents Ghostty from reopening saved windows in addition to the requested chat terminal. The launched Ghostty instance also quits when its last window closes.
-
-Override `selectionBridge.chatTerminal.executable` and `selectionBridge.chatTerminal.args` to use another terminal. Argument templates support `${workspaceFolder}`, `${workspaceFolderBasename}`, `${selectionBridgeInstance}`, and `${startupCommand}`.
-
-## Devcontainers
-
-Selection Bridge runs as a local VS Code UI extension, so it can still launch Ghostty from a devcontainer window. It automatically tries to infer the host checkout path from VS Code's devcontainer remote URI. If that cannot be inferred, configure a local mapping so Ghostty/Codex can read the selected file from the host checkout.
-
-Fallback for a single-root devcontainer workspace:
-
-```json
-{
-  "selectionBridge.devcontainer.localWorkspaceFolder": "/Users/me/src/my-project"
-}
-```
-
-For multi-root or custom mounts:
-
-```json
-{
-  "selectionBridge.pathMappings": [
-    {
-      "remotePrefix": "/workspaces/my-project",
-      "localPrefix": "/Users/me/src/my-project"
-    }
-  ]
-}
-```
-
-To run Codex inside the devcontainer from the Ghostty button, configure a startup command like:
-
-```json
-{
-  "selectionBridge.chatTerminal.startupCommands": [
-    "tmux new-session -A 'bash ./scripts/devcontainer-exec.sh \"$PWD\" zsh -lc \"export SELECTION_BRIDGE_HOST=host.docker.internal SELECTION_BRIDGE_PORT=$SELECTION_BRIDGE_PORT SELECTION_BRIDGE_TOKEN=$SELECTION_BRIDGE_TOKEN SELECTION_BRIDGE_INSTANCE=$SELECTION_BRIDGE_INSTANCE; codex; exec zsh -i\"'"
-  ]
-}
-```
-
-This is the same direct startup flow used for local workspaces: no chatbot selector is shown, and the tmux session name defaults to the workspace name.
-
-When Codex runs inside the container, the resolver uses `SELECTION_BRIDGE_HOST`, `SELECTION_BRIDGE_PORT`, and `SELECTION_BRIDGE_TOKEN` instead of the host registry file. On Docker Desktop for macOS, `host.docker.internal` reaches the VS Code-side bridge.
-
-`scripts/devcontainer-exec.sh` uses a global `devcontainer` command when available. If it is not installed, it falls back to the Dev Containers CLI bundled inside the VS Code Dev Containers extension.
-# SelectionBridge
+For ambiguous multi-window setups, run `Selection Bridge: Copy Bind Command` in the target VS Code window and paste the copied `export SELECTION_BRIDGE_INSTANCE=...` command into the agent terminal.
