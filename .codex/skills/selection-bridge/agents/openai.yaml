@@ -1,4 +1,0 @@
-interface:
-  display_name: "Selection Bridge"
-  short_description: "Resolve VS Code selections from terminal agents"
-  default_prompt: "Use $selection-bridge to resolve what I mean by this selection in VS Code."
