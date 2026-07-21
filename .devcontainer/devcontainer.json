@@ -5,19 +5,8 @@
     "vscode": {
       "settings": {
         "selectionBridge.devcontainer.localWorkspaceFolder": "${localWorkspaceFolder}",
-        "selectionBridge.chatTerminal.selector.enabled": true,
-        "selectionBridge.chatTerminal.selector.tmuxDefault": true,
-        "selectionBridge.chatTerminal.selector.tmuxSessionName": "codex",
-        "selectionBridge.chatTerminal.selector.noneCommand": "bash ./scripts/devcontainer-exec.sh \"$PWD\" zsh -lc \"export SELECTION_BRIDGE_HOST=host.docker.internal SELECTION_BRIDGE_PORT=$SELECTION_BRIDGE_PORT SELECTION_BRIDGE_TOKEN=$SELECTION_BRIDGE_TOKEN SELECTION_BRIDGE_INSTANCE=$SELECTION_BRIDGE_INSTANCE; exec zsh -i\"",
-        "selectionBridge.chatTerminal.selector.models": [
-          {
-            "label": "Codex",
-            "command": "bash ./scripts/devcontainer-exec.sh \"$PWD\" zsh -lc \"export SELECTION_BRIDGE_HOST=host.docker.internal SELECTION_BRIDGE_PORT=$SELECTION_BRIDGE_PORT SELECTION_BRIDGE_TOKEN=$SELECTION_BRIDGE_TOKEN SELECTION_BRIDGE_INSTANCE=$SELECTION_BRIDGE_INSTANCE; codex; exec zsh -i\""
-          },
-          {
-            "label": "Claude",
-            "command": "bash ./scripts/devcontainer-exec.sh \"$PWD\" zsh -lc \"export SELECTION_BRIDGE_HOST=host.docker.internal SELECTION_BRIDGE_PORT=$SELECTION_BRIDGE_PORT SELECTION_BRIDGE_TOKEN=$SELECTION_BRIDGE_TOKEN SELECTION_BRIDGE_INSTANCE=$SELECTION_BRIDGE_INSTANCE; claude; exec zsh -i\""
-          }
+        "selectionBridge.chatTerminal.startupCommands": [
+          "tmux new-session -A 'bash ./scripts/devcontainer-exec.sh \"$PWD\" zsh -lc \"export SELECTION_BRIDGE_HOST=host.docker.internal SELECTION_BRIDGE_PORT=$SELECTION_BRIDGE_PORT SELECTION_BRIDGE_TOKEN=$SELECTION_BRIDGE_TOKEN SELECTION_BRIDGE_INSTANCE=$SELECTION_BRIDGE_INSTANCE; codex; exec zsh -i\"'"
         ],
         "terminal.integrated.defaultProfile.linux": "zsh"
       }

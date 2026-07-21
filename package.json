@@ -53,13 +53,19 @@
       "editor/title": [
         {
           "command": "selectionBridge.openChatTerminal",
-          "group": "navigation@100"
+          "group": "navigation@100",
+          "when": "config.selectionBridge.chatTerminal.button.enabled"
         }
       ]
     },
     "configuration": {
       "title": "Selection Bridge",
       "properties": {
+        "selectionBridge.chatTerminal.button.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show the Selection Bridge chat terminal button in the editor title toolbar."
+        },
         "selectionBridge.chatTerminal.executable": {
           "type": "string",
           "default": "",
@@ -79,7 +85,12 @@
           "items": {
             "type": "string"
           },
-          "markdownDescription": "Commands to run in the new chat terminal after exporting bridge variables including `SELECTION_BRIDGE_INSTANCE`, `SELECTION_BRIDGE_HOST`, `SELECTION_BRIDGE_PORT`, and `SELECTION_BRIDGE_TOKEN`. Example: `[\"codex\"]` or `[\"claude\"]`."
+          "markdownDescription": "Commands to run in the new chat terminal after exporting bridge variables including `SELECTION_BRIDGE_INSTANCE`, `SELECTION_BRIDGE_HOST`, `SELECTION_BRIDGE_PORT`, and `SELECTION_BRIDGE_TOKEN`. Example: `[\"codex\"]` or `[\"claude\"]`. For `tmux new-session` commands, the `-s` value is replaced with `selectionBridge.chatTerminal.tmuxSessionName` or the current workspace name."
+        },
+        "selectionBridge.chatTerminal.tmuxSessionName": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Session name applied to `tmux new-session` commands in `selectionBridge.chatTerminal.startupCommands`. Leave empty to use the current workspace name."
         },
         "selectionBridge.chatTerminal.shell": {
           "type": "string",

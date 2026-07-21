@@ -4,6 +4,7 @@ export interface ChatTerminalConfig {
   executable?: string;
   args?: readonly string[];
   startupCommands?: readonly string[];
+  tmuxSessionName?: string;
   shell?: string;
   keepOpen?: boolean;
   extraEnv?: Record<string, string>;
@@ -40,20 +41,27 @@ interface PlaceholderValues {
 }
 
 const PLACEHOLDER_PATTERN = /\$\{([A-Za-z0-9_]+)\}/g;
+const TMUX_NEW_SESSION_NAME_PATTERN =
+  /(\btmux\s+(?:new-session|new)\b[^\n;]*?\s)-s(?:\s+)?(?:"(?:\\.|[^"])*"|'[^']*'|[^\s;]+)/g;
+const TMUX_NEW_SESSION_PREFIX_PATTERN = /^(\s*(?:command\s+)?tmux\s+(?:new-session|new)\b)/;
 
 export function buildChatTerminalLaunch(options: BuildChatTerminalLaunchOptions): ChatTerminalLaunch {
   const shell = options.config.shell?.trim() || options.env.SHELL || defaultShell(options.platform);
+  const workspaceName = options.workspaceName || path.basename(options.workspaceFolder);
+  const tmuxSessionName = options.config.tmuxSessionName?.trim() || workspaceName;
   const startupCommand = buildStartupCommand({
     shell,
     instanceId: options.instanceId,
     port: options.port,
     token: options.token,
-    startupCommands: options.config.startupCommands || [],
+    startupCommands: (options.config.startupCommands || []).map((command) =>
+      applyTmuxSessionName(command, tmuxSessionName)
+    ),
     keepOpen: options.config.keepOpen ?? true
   });
   const placeholders: PlaceholderValues = {
     workspaceFolder: options.workspaceFolder,
-    workspaceFolderBasename: options.workspaceName || path.basename(options.workspaceFolder),
+    workspaceFolderBasename: workspaceName,
     selectionBridgeInstance: options.instanceId,
     selectionBridgeHost: '127.0.0.1',
     selectionBridgeContainerHost: 'host.docker.internal',
@@ -82,6 +90,20 @@ export function buildChatTerminalLaunch(options: BuildChatTerminalLaunchOptions)
     },
     startupCommand
   };
+}
+
+export function applyTmuxSessionName(command: string, sessionName: string): string {
+  const namedCommand = command.replace(TMUX_NEW_SESSION_NAME_PATTERN, (_match, prefix: string) => {
+    return `${prefix}-s ${shellQuote(sessionName)}`;
+  });
+
+  if (namedCommand !== command) {
+    return namedCommand;
+  }
+
+  return command.replace(TMUX_NEW_SESSION_PREFIX_PATTERN, (_match, prefix: string) => {
+    return `${prefix} -s ${shellQuote(sessionName)}`;
+  });
 }
 
 export function buildStartupCommand(options: {

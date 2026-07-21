@@ -293,6 +293,7 @@ function readChatTerminalConfig(): ChatTerminalConfig {
     executable: config.get<string>('executable', ''),
     args: config.get<string[]>('args', []),
     startupCommands: config.get<string[]>('startupCommands', []),
+    tmuxSessionName: config.get<string>('tmuxSessionName', ''),
     shell: config.get<string>('shell', ''),
     keepOpen: config.get<boolean>('keepOpen', true),
     extraEnv: config.get<Record<string, string>>('extraEnv', {})

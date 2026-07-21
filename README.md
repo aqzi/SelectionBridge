@@ -34,7 +34,13 @@ For ambiguous multi-window setups, run `Selection Bridge: Copy Bind Command` in 
 
 ## Chat Terminal Button
 
-Selection Bridge adds `Selection Bridge: Open Chat Terminal` to the editor title toolbar. By default it launches Ghostty for the current workspace folder and exports `SELECTION_BRIDGE_INSTANCE` inside the new shell.
+The `Selection Bridge: Open Chat Terminal` command launches Ghostty for the current workspace folder and exports `SELECTION_BRIDGE_INSTANCE` inside the new shell. Its editor title toolbar button is shown by default. Hide it in VS Code settings:
+
+```json
+{
+  "selectionBridge.chatTerminal.button.enabled": false
+}
+```
 
 Configure startup commands in VS Code settings:
 
@@ -45,6 +51,14 @@ Configure startup commands in VS Code settings:
 ```
 
 Use `["claude"]` instead if that is your preferred agent. Leave the array empty to open a bound shell without starting an agent.
+
+When a startup command opens tmux with `tmux new-session -s`, Selection Bridge uses the current workspace name for the session by default. The original `-s` value is replaced, so existing commands such as `tmux new-session -A -s codex ...` automatically use the workspace name. To override it:
+
+```json
+{
+  "selectionBridge.chatTerminal.tmuxSessionName": "shared-chat"
+}
+```
 
 The default macOS launcher is equivalent to:
 
@@ -86,10 +100,12 @@ To run Codex inside the devcontainer from the Ghostty button, configure a startu
 ```json
 {
   "selectionBridge.chatTerminal.startupCommands": [
-    "bash ./scripts/devcontainer-exec.sh \"$PWD\" zsh -lc \"export SELECTION_BRIDGE_HOST=host.docker.internal SELECTION_BRIDGE_PORT=$SELECTION_BRIDGE_PORT SELECTION_BRIDGE_TOKEN=$SELECTION_BRIDGE_TOKEN SELECTION_BRIDGE_INSTANCE=$SELECTION_BRIDGE_INSTANCE; codex\""
+    "tmux new-session -A 'bash ./scripts/devcontainer-exec.sh \"$PWD\" zsh -lc \"export SELECTION_BRIDGE_HOST=host.docker.internal SELECTION_BRIDGE_PORT=$SELECTION_BRIDGE_PORT SELECTION_BRIDGE_TOKEN=$SELECTION_BRIDGE_TOKEN SELECTION_BRIDGE_INSTANCE=$SELECTION_BRIDGE_INSTANCE; codex; exec zsh -i\"'"
   ]
 }
 ```
+
+This is the same direct startup flow used for local workspaces: no chatbot selector is shown, and the tmux session name defaults to the workspace name.
 
 When Codex runs inside the container, the resolver uses `SELECTION_BRIDGE_HOST`, `SELECTION_BRIDGE_PORT`, and `SELECTION_BRIDGE_TOKEN` instead of the host registry file. On Docker Desktop for macOS, `host.docker.internal` reaches the VS Code-side bridge.
 

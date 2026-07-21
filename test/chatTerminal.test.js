@@ -4,10 +4,22 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
+  applyTmuxSessionName,
   buildChatTerminalLaunch,
   buildStartupCommand,
   interpolate
 } = require('../out/chatTerminal.js');
+
+test('adds a workspace session name when a tmux command omits -s', () => {
+  assert.equal(
+    applyTmuxSessionName('tmux new-session -A', 'this-pointer'),
+    "tmux new-session -s 'this-pointer' -A"
+  );
+});
+
+test('does not alter startup commands that do not open tmux', () => {
+  assert.equal(applyTmuxSessionName('codex', 'this-pointer'), 'codex');
+});
 
 test('builds the default macOS Ghostty launch command', () => {
   const launch = buildChatTerminalLaunch({
@@ -61,6 +73,45 @@ test('builds the default non-macOS Ghostty launch command', () => {
   ]);
   assert.match(launch.args[2], /^--command=/);
   assert.match(launch.args[2], /exec '\\''\/bin\/bash'\\'' -i/);
+});
+
+test('names tmux sessions after the workspace by default', () => {
+  const launch = buildChatTerminalLaunch({
+    config: {
+      startupCommands: ["tmux new-session -A -s codex 'codex; exec $SHELL -i'"],
+      shell: '/bin/zsh'
+    },
+    workspaceFolder: '/Users/me/this-pointer',
+    workspaceName: 'this-pointer',
+    instanceId: 'instance-id',
+    port: 4321,
+    token: 'secret-token',
+    platform: 'darwin',
+    env: {}
+  });
+
+  assert.match(launch.startupCommand, /this-pointer/);
+  assert.doesNotMatch(launch.startupCommand, /-s codex/);
+});
+
+test('allows the tmux session name to override the workspace name', () => {
+  const launch = buildChatTerminalLaunch({
+    config: {
+      startupCommands: ["tmux new-session -A -s codex 'codex; exec $SHELL -i'"],
+      tmuxSessionName: 'shared-chat',
+      shell: '/bin/zsh'
+    },
+    workspaceFolder: '/Users/me/this-pointer',
+    workspaceName: 'this-pointer',
+    instanceId: 'instance-id',
+    port: 4321,
+    token: 'secret-token',
+    platform: 'darwin',
+    env: {}
+  });
+
+  assert.match(launch.startupCommand, /shared-chat/);
+  assert.doesNotMatch(launch.startupCommand, /-s codex/);
 });
 
 test('supports custom executable and argument templates', () => {
