@@ -2,21 +2,10 @@
 'use strict';
 
 const fs = require('node:fs');
-const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 
 const DEFAULT_STALE_MS = 30_000;
-const DEFAULT_TIMEOUT_MS = 1_000;
-
-class PointerRequestError extends Error {
-  constructor(code, message, details = undefined) {
-    super(message);
-    this.name = 'PointerRequestError';
-    this.code = code;
-    this.details = details;
-  }
-}
 
 function getPointerHome(env = process.env) {
   return env.SELECTION_BRIDGE_HOME || env.THIS_POINTER_HOME || path.join(os.homedir(), '.selection-bridge');
@@ -252,78 +241,6 @@ function workspaceMismatchRecovery(cwd, instances) {
   return `Open ${quoteForMessage(cwd)} as a VS Code workspace, or move this terminal into an active workspace by running: ${commands}.`;
 }
 
-function requestPointer(instance, options = {}) {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-
-  return new Promise((resolve, reject) => {
-    const request = http.request(
-      {
-        hostname: '127.0.0.1',
-        port: instance.port,
-        path: '/pointer',
-        method: 'GET',
-        timeout: timeoutMs,
-        headers: {
-          authorization: `Bearer ${instance.token}`,
-          accept: 'application/json'
-        }
-      },
-      (response) => {
-        const chunks = [];
-        response.on('data', (chunk) => chunks.push(chunk));
-        response.on('end', () => {
-          const body = Buffer.concat(chunks).toString('utf8');
-          let parsed;
-          try {
-            parsed = JSON.parse(body);
-          } catch {
-            reject(
-              new PointerRequestError(
-                'invalid_response',
-                `Selection Bridge server returned non-JSON response with status ${response.statusCode}.`,
-                { statusCode: response.statusCode }
-              )
-            );
-            return;
-          }
-
-          if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
-            const requestErrorCode =
-              response.statusCode === 401
-                ? 'authentication_failed'
-                : response.statusCode === 404
-                  ? 'protocol_mismatch'
-                  : 'http_error';
-            reject(
-              new PointerRequestError(
-                requestErrorCode,
-                parsed?.error?.message ||
-                  `Selection Bridge server returned status ${response.statusCode}.`,
-                { statusCode: response.statusCode, serverError: parsed?.error }
-              )
-            );
-            return;
-          }
-
-          resolve(parsed);
-        });
-      }
-    );
-
-    request.on('timeout', () => {
-      request.destroy(
-        new PointerRequestError(
-          'request_timeout',
-          `Timed out after ${timeoutMs}ms while querying Selection Bridge instance ${instance.id}.`,
-          { timeoutMs }
-        )
-      );
-    });
-    request.on('error', reject);
-    request.end();
-  });
-}
-
 async function resolvePointer(options = {}) {
   const env = options.env || process.env;
   const cwd = normalizePath(options.cwd || process.cwd());
@@ -335,14 +252,7 @@ async function resolvePointer(options = {}) {
     now: options.now
   };
   const load = options.loadInstances || loadInstances;
-  const selectOptions = {
-    env,
-    cwd,
-    instanceId: options.instanceId
-  };
-  const hasExplicitBinding = Boolean(
-    options.instanceId || env.SELECTION_BRIDGE_INSTANCE || env.THIS_POINTER_INSTANCE
-  );
+
   let instances;
   try {
     instances = load(loadOptions);
@@ -350,138 +260,41 @@ async function resolvePointer(options = {}) {
     return registryReadFailure(error, loadOptions);
   }
 
-  let selection = selectInstance(instances, selectOptions);
+  const selection = selectInstance(instances, {
+    env,
+    cwd,
+    instanceId: options.instanceId
+  });
 
   if (!selection.ok) {
     return selection;
   }
 
-  const pointerRequester = options.requestPointer || requestPointer;
-  let response;
-  try {
-    response = await pointerRequester(selection.instance, { timeoutMs: options.timeoutMs });
-  } catch (error) {
-    if (!isRetryableRequestError(error)) {
-      return requestFailure(error, selection.instance, options.timeoutMs, false, hasExplicitBinding);
-    }
-
-    try {
-      instances = load(loadOptions);
-    } catch (loadError) {
-      return registryReadFailure(loadError, loadOptions);
-    }
-
-    selection = selectInstance(instances, selectOptions);
-    if (!selection.ok) {
-      return selection;
-    }
-
-    try {
-      response = await pointerRequester(selection.instance, { timeoutMs: options.timeoutMs });
-    } catch (retryError) {
-      return requestFailure(
-        retryError,
-        selection.instance,
-        options.timeoutMs,
-        true,
-        hasExplicitBinding
-      );
-    }
+  const instance = selection.instance;
+  const pointer = instance.pointer;
+  if (!pointer || typeof pointer !== 'object') {
+    const instanceName = instance.workspaceName || instance.id;
+    return failure(
+      'extension_outdated',
+      `The Selection Bridge extension in ${quoteForMessage(instanceName)} is an older version that does not publish pointer metadata to the registry.`,
+      { instance: summarizeInstance(instance) },
+      'Update the Selection Bridge extension in that VS Code window, run "Developer: Reload Window" from the Command Palette, and then repeat the request.'
+    );
   }
 
-  return resolvedPointerResult(response, selection, cwd, options.fileSystem || fs);
-}
+  const pointerFailure = validatePointer(pointer, options.fileSystem || fs);
+  if (pointerFailure) {
+    return pointerFailure;
+  }
 
-function isRetryableRequestError(error) {
-  return [
-    'authentication_failed',
-    'request_timeout',
-    'ECONNREFUSED',
-    'ECONNRESET',
-    'EPIPE'
-  ].includes(error?.code);
-}
-
-function requestFailure(
-  error,
-  instance,
-  timeoutMs,
-  retried = false,
-  hasExplicitBinding = false
-) {
-  const code = error?.code;
-  const instanceName = instance.workspaceName || instance.id;
-  const details = {
-    instance: summarizeInstance(instance),
-    ...(error?.details ? { request: error.details } : {}),
-    ...(error?.syscall || error?.address || error?.port
-      ? {
-          systemError: {
-            ...(code ? { code } : {}),
-            ...(error.syscall ? { syscall: error.syscall } : {}),
-            ...(error.address ? { address: error.address } : {}),
-            ...(error.port ? { port: error.port } : {})
-          }
-        }
-      : {}),
-    retried
+  return {
+    ok: true,
+    selectedBy: selection.selectedBy,
+    ...(selection.recoveredBinding ? { recoveredBinding: selection.recoveredBinding } : {}),
+    cwd,
+    instance: sanitizeInstance(instance),
+    pointer
   };
-
-  if (code === 'EPERM' || code === 'EACCES') {
-    const endpoint = `127.0.0.1:${instance.port}`;
-    return failure(
-      'connection_permission_denied',
-      `The resolver was not permitted to connect to the Selection Bridge loopback server at ${endpoint}.`,
-      details,
-      `Retry the resolver with permission to connect to the local loopback address ${endpoint}. Do not reload VS Code; the extension is already running.`
-    );
-  }
-
-  if (code === 'authentication_failed') {
-    return failure(
-      'authentication_failed_after_retry',
-      `The Selection Bridge extension in ${quoteForMessage(instanceName)} rejected the refreshed registry token.`,
-      details,
-      hasExplicitBinding
-        ? 'Run "Selection Bridge: Reset Instance Id" in that VS Code window, then paste and run the newly copied binding command in this terminal.'
-        : 'Run "Selection Bridge: Reset Instance Id" in that VS Code window, then repeat the request.'
-    );
-  }
-
-  if (code === 'ECONNREFUSED' || code === 'ECONNRESET' || code === 'EPIPE') {
-    return failure(
-      'connection_refused_after_retry',
-      `The matching VS Code window ${quoteForMessage(instanceName)} was found, but its co-located Selection Bridge server did not accept the connection after an automatic retry.`,
-      details,
-      `Run "Developer: Reload Window" in the VS Code window for ${quoteForMessage(instanceName)}, then repeat the request.${remoteTerminalRecoverySuffix(instance)}`
-    );
-  }
-
-  if (code === 'request_timeout') {
-    const effectiveTimeout = error?.details?.timeoutMs || timeoutMs || DEFAULT_TIMEOUT_MS;
-    return failure(
-      'connection_timeout_after_retry',
-      `The Selection Bridge extension in ${quoteForMessage(instanceName)} did not answer within ${effectiveTimeout}ms after an automatic retry.`,
-      details,
-      `Run "Developer: Reload Window" in the VS Code window for ${quoteForMessage(instanceName)}, then repeat the request.${remoteTerminalRecoverySuffix(instance)}`
-    );
-  }
-
-  if (code === 'protocol_mismatch' || code === 'invalid_response') {
-    return failure(
-      'protocol_mismatch',
-      `The Selection Bridge extension in ${quoteForMessage(instanceName)} returned an incompatible response.`,
-      details,
-      'Install matching versions of the Selection Bridge extension and skill, reload VS Code, and then repeat the request.'
-    );
-  }
-
-  return failure(
-    'query_failed',
-    `The Selection Bridge extension in ${quoteForMessage(instanceName)} could not be queried: ${errorMessage(error)}`,
-    details,
-    'In that VS Code window, run "Selection Bridge: Show Current Pointer", then repeat the request.'
-  );
 }
 
 function registryReadFailure(error, options) {
@@ -492,51 +305,6 @@ function registryReadFailure(error, options) {
     { instancesDir },
     `Ensure the current terminal user can read ${instancesDir}, then repeat the request.`
   );
-}
-
-function remoteTerminalRecoverySuffix(instance) {
-  if (!isRemoteInstance(instance)) {
-    return '';
-  }
-
-  return ' If it still fails, start a new agent session in a terminal opened from that same remote VS Code window; the current terminal is not sharing the extension host\'s loopback network.';
-}
-
-function isRemoteInstance(instance) {
-  return Boolean(
-    instance.execution?.vscodeRemoteName ||
-      (instance.workspaceFolders || []).some((folder) => isRemoteUri(folder.uri))
-  );
-}
-
-function resolvedPointerResult(response, selection, cwd, fileSystem) {
-  if (!response || response.ok === false || !response.pointer) {
-    return failure(
-      'protocol_mismatch',
-      'The Selection Bridge extension returned a response without pointer metadata.',
-      { response },
-      'Install matching versions of the Selection Bridge extension and skill, reload VS Code, and then repeat the request.'
-    );
-  }
-
-  const pointerFailure = validatePointer(response.pointer, fileSystem);
-  if (pointerFailure) {
-    return pointerFailure;
-  }
-
-  const responseInstance = {
-    ...selection.instance,
-    ...(response.instance || {}),
-    token: selection.instance.token
-  };
-  return {
-    ok: true,
-    selectedBy: selection.selectedBy,
-    ...(selection.recoveredBinding ? { recoveredBinding: selection.recoveredBinding } : {}),
-    cwd,
-    instance: sanitizeInstance(responseInstance),
-    pointer: response.pointer
-  };
 }
 
 function validatePointer(pointer, fileSystem) {
@@ -552,7 +320,7 @@ function validatePointer(pointer, fileSystem) {
   if (!pointer.document) {
     return failure(
       'protocol_mismatch',
-      'The Selection Bridge extension returned pointer metadata without a document.',
+      'The Selection Bridge extension published pointer metadata without a document.',
       { pointerKind: pointer.kind },
       'Install matching versions of the Selection Bridge extension and skill, reload VS Code, and then repeat the request.'
     );
@@ -670,8 +438,7 @@ async function main(argv = process.argv.slice(2), io = process) {
     cwd: options.cwd || process.cwd(),
     home: options.home,
     instanceId: options.instanceId,
-    staleMs: options.staleMs,
-    timeoutMs: options.timeoutMs
+    staleMs: options.staleMs
   });
   writeJson(result.ok ? io.stdout : io.stderr, result, options.pretty);
   return result.ok ? 0 : 1;
@@ -707,9 +474,6 @@ function parseArgs(argv) {
           break;
         case '--stale-ms':
           options.staleMs = parsePositiveInteger(arg, requireValue(arg, args));
-          break;
-        case '--timeout-ms':
-          options.timeoutMs = parsePositiveInteger(arg, requireValue(arg, args));
           break;
         case '--json':
           options.pretty = false;
@@ -796,10 +560,10 @@ function summarizeInstance(instance) {
     id: safe.id,
     workspaceName: safe.workspaceName,
     workspaceFolders: safe.workspaceFolders || [],
-    activeDocumentPath: safe.activeDocumentPath,
+    activeDocumentPath: safe.pointer?.document?.path,
+    lastPointerKind: safe.pointer?.kind,
+    lastSelectionCapturedAt: safe.pointer?.capturedAt,
     execution: safe.execution,
-    lastPointerKind: safe.lastPointerKind,
-    lastSelectionCapturedAt: safe.lastSelectionCapturedAt,
     updatedAt: safe.updatedAt
   };
 }
@@ -829,7 +593,6 @@ function usage() {
     '  --instance <id>       Resolve an explicit VS Code instance id',
     '  --home <path>         Override SELECTION_BRIDGE_HOME for testing',
     '  --stale-ms <ms>       Ignore registry entries older than this age',
-    '  --timeout-ms <ms>     HTTP timeout when querying a VS Code instance',
     '  --json               Emit compact JSON',
     '  --pretty             Emit pretty JSON',
     '  -h, --help           Show this help'
@@ -838,12 +601,10 @@ function usage() {
 
 module.exports = {
   DEFAULT_STALE_MS,
-  DEFAULT_TIMEOUT_MS,
   getPointerHome,
   getInstancesDir,
   loadInstances,
   selectInstance,
-  requestPointer,
   resolvePointer,
   parseArgs,
   normalizePath,

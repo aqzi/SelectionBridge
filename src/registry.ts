@@ -4,7 +4,7 @@ import * as path from 'node:path';
 
 import type { PointerSnapshot } from './pointer';
 
-export const REGISTRY_SCHEMA_VERSION = 1;
+export const REGISTRY_SCHEMA_VERSION = 2;
 
 export interface RegistryWorkspaceFolder {
   name: string;
@@ -25,15 +25,10 @@ export interface RegistryExecutionEnvironment {
 export interface RegistryEntry {
   schemaVersion: typeof REGISTRY_SCHEMA_VERSION;
   id: string;
-  port: number;
-  token: string;
   pid: number;
   workspaceName?: string;
   workspaceFolders: RegistryWorkspaceFolder[];
-  activeDocumentUri?: string;
-  activeDocumentPath?: string;
-  lastPointerKind: PointerSnapshot['kind'];
-  lastSelectionCapturedAt: string;
+  pointer: PointerSnapshot;
   createdAt: string;
   updatedAt: string;
   vscodeSessionId?: string;

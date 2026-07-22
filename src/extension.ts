@@ -17,21 +17,19 @@ import {
   type RegistryEntry,
   type RegistryWorkspaceFolder
 } from './registry';
-import { startPointerServer, type PointerServer } from './server';
 
 const HEARTBEAT_INTERVAL_MS = 5_000;
 const STALE_REGISTRY_MAX_AGE_MS = 60_000;
+const POINTER_WRITE_COALESCE_MS = 100;
 
 interface RuntimeState {
   instanceId: string;
-  token: string;
   createdAt: string;
-  port: number;
   pointer: PointerSnapshot;
   registryWriter: RegistryWriter;
-  server: PointerServer;
   output: vscode.OutputChannel;
   heartbeat: NodeJS.Timeout;
+  pointerWriteTimer?: NodeJS.Timeout;
   extensionHostKind: 'ui' | 'workspace';
 }
 
@@ -40,46 +38,27 @@ export interface SelectionBridgeContext {
     path: string;
     name: string;
   };
-  bridge: {
-    instanceId: string;
-    host: string;
-    port: number;
-    token: string;
-  };
+  instanceId: string;
 }
 
 export interface SelectionBridgeApi {
-  version: 1;
+  version: 2;
   getContext(resource?: vscode.Uri): SelectionBridgeContext | undefined;
 }
 
 let runtime: RuntimeState | undefined;
 
-export async function activate(context: vscode.ExtensionContext): Promise<SelectionBridgeApi> {
+export function activate(context: vscode.ExtensionContext): SelectionBridgeApi {
   cleanupStaleRegistryFiles(STALE_REGISTRY_MAX_AGE_MS);
 
   const instanceId = crypto.randomUUID();
-  const token = crypto.randomUUID();
-  const createdAt = new Date().toISOString();
-  const output = vscode.window.createOutputChannel('Selection Bridge');
-  const registryWriter = new RegistryWriter(instanceId);
-  const initialPointer = snapshotActiveEditor();
-
-  const server = await startPointerServer({
-    getToken: () => requireRuntime().token,
-    getInstance: () => buildRegistryEntry(requireRuntime()),
-    getPointer: () => requireRuntime().pointer
-  });
 
   runtime = {
     instanceId,
-    token,
-    createdAt,
-    port: server.port,
-    pointer: initialPointer,
-    registryWriter,
-    server,
-    output,
+    createdAt: new Date().toISOString(),
+    pointer: snapshotActiveEditor(),
+    registryWriter: new RegistryWriter(instanceId),
+    output: vscode.window.createOutputChannel('Selection Bridge'),
     extensionHostKind:
       context.extension.extensionKind === vscode.ExtensionKind.Workspace ? 'workspace' : 'ui',
     heartbeat: setInterval(() => writeRegistry(), HEARTBEAT_INTERVAL_MS)
@@ -114,18 +93,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<Select
     vscode.commands.registerCommand('selectionBridge.resetInstanceId', resetInstanceId),
     {
       dispose: () => {
-        void deactivate();
+        deactivate();
       }
     }
   );
 
   return {
-    version: 1,
+    version: 2,
     getContext
   };
 }
 
-export async function deactivate(): Promise<void> {
+export function deactivate(): void {
   if (!runtime) {
     return;
   }
@@ -134,17 +113,33 @@ export async function deactivate(): Promise<void> {
   runtime = undefined;
 
   clearInterval(current.heartbeat);
+  if (current.pointerWriteTimer) {
+    clearTimeout(current.pointerWriteTimer);
+  }
   current.registryWriter.dispose();
   current.output.dispose();
-  await current.server.dispose();
 }
 
 function updatePointer(editor: vscode.TextEditor | undefined): void {
-  requireRuntime().pointer = createPointerSnapshot(
-    editor,
-    getWorkspaceFolder(editor?.document.uri)
-  );
-  writeRegistry();
+  const current = requireRuntime();
+  current.pointer = createPointerSnapshot(editor, getWorkspaceFolder(editor?.document.uri));
+  schedulePointerWrite(current);
+}
+
+/**
+ * Selection events fire on every cursor movement; coalesce bursts into a
+ * single registry write so the on-disk pointer trails the editor by at most
+ * POINTER_WRITE_COALESCE_MS.
+ */
+function schedulePointerWrite(current: RuntimeState): void {
+  if (current.pointerWriteTimer) {
+    return;
+  }
+
+  current.pointerWriteTimer = setTimeout(() => {
+    current.pointerWriteTimer = undefined;
+    writeRegistry();
+  }, POINTER_WRITE_COALESCE_MS);
 }
 
 function snapshotActiveEditor(): PointerSnapshot {
@@ -170,21 +165,15 @@ function writeRegistry(): void {
 }
 
 function buildRegistryEntry(current: RuntimeState): RegistryEntry {
-  const activeDocument = current.pointer.document;
   const vscodeEnv = vscode.env as typeof vscode.env & { sessionId?: string };
 
   return {
     schemaVersion: REGISTRY_SCHEMA_VERSION,
     id: current.instanceId,
-    port: current.port,
-    token: current.token,
     pid: process.pid,
     ...(vscode.workspace.name ? { workspaceName: vscode.workspace.name } : {}),
     workspaceFolders: serializeWorkspaceFolders(),
-    ...(activeDocument?.uri ? { activeDocumentUri: activeDocument.uri } : {}),
-    ...(activeDocument?.path ? { activeDocumentPath: activeDocument.path } : {}),
-    lastPointerKind: current.pointer.kind,
-    lastSelectionCapturedAt: current.pointer.capturedAt,
+    pointer: current.pointer,
     createdAt: current.createdAt,
     updatedAt: new Date().toISOString(),
     ...(vscodeEnv.sessionId ? { vscodeSessionId: vscodeEnv.sessionId } : {}),
@@ -206,8 +195,7 @@ async function showCurrentPointer(): Promise<void> {
   const current = requireRuntime();
   const payload = {
     ok: true,
-    instance: removeToken(buildRegistryEntry(current)),
-    pointer: current.pointer
+    instance: buildRegistryEntry(current)
   };
 
   current.output.clear();
@@ -225,7 +213,6 @@ async function resetInstanceId(): Promise<void> {
   const current = requireRuntime();
   current.registryWriter.dispose();
   current.instanceId = crypto.randomUUID();
-  current.token = crypto.randomUUID();
   current.createdAt = new Date().toISOString();
   current.registryWriter = new RegistryWriter(current.instanceId);
   writeRegistry();
@@ -245,12 +232,7 @@ function getContext(resource?: vscode.Uri): SelectionBridgeContext | undefined {
 
   return {
     workspace,
-    bridge: {
-      instanceId: current.instanceId,
-      host: '127.0.0.1',
-      port: current.port,
-      token: current.token
-    }
+    instanceId: current.instanceId
   };
 }
 
@@ -288,9 +270,4 @@ function requireRuntime(): RuntimeState {
   }
 
   return runtime;
-}
-
-function removeToken(entry: RegistryEntry): Omit<RegistryEntry, 'token'> {
-  const { token: _token, ...safeEntry } = entry;
-  return safeEntry;
 }

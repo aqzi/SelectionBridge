@@ -4,6 +4,8 @@ Selection Bridge connects your current VS Code selection to terminal-based agent
 
 With Selection Bridge, you can refer to "this selection" and the agent immediately receives a lightweight pointer to the correct file and range. It can read the saved content directly from your workspace together with the surrounding context it needs. The extension exposes only location metadata, not the selected text itself, and works with a companion agent skill.
 
+The extension publishes the pointer to a registry file under `~/.selection-bridge/instances/` and refreshes it while the window is open. The skill's resolver reads that file directly; nothing is served over the network, so no ports, tokens, or loopback permissions are involved.
+
 ## Install the Agent Skill
 
 The VS Code extension provides the selection location, while the companion skill teaches your terminal agent how to retrieve and use it. Start the installer with:
@@ -21,6 +23,8 @@ For a remote workspace, run this installer in that remote environment and instal
 Select code in a saved file in VS Code, then ask your terminal agent about "this selection", "the selected code", or another equivalent reference. The skill resolves the pointer, reads the selected range from disk, and can inspect the surrounding file when more context is useful.
 
 Selection Bridge intentionally does not transmit the selected text. Save the file first when you want the agent to see recent edits. The pointer reports when the active document contains unsaved changes.
+
+Tip: set `files.autoSave` to `onFocusChange` or `onWindowChange` in VS Code. The file then saves automatically the moment you switch to the terminal, so the on-disk content always matches what you selected.
 
 The extension provides these commands through the Command Palette:
 
@@ -60,7 +64,7 @@ For ambiguous multi-window setups, run `Selection Bridge: Copy Bind Command` in 
 
 ## Remote Workspaces
 
-Selection Bridge runs as a workspace extension. In a remote VS Code window, the extension server, registry, workspace paths, and terminal agent therefore run on the remote side together. No tunnel or path mapping is needed.
+Selection Bridge runs as a workspace extension. In a remote VS Code window, the registry, workspace paths, and terminal agent therefore live on the remote side together. No tunnel or path mapping is needed.
 
 For remote selection resolution, all of these must be true:
 
@@ -77,6 +81,5 @@ The resolver reports one failure and one targeted recovery. Common setup and con
 | `remote_extension_not_running` | In the target remote VS Code window, install Selection Bridge on the remote side, run `Developer: Reload Window`, and start a new agent session from that window's terminal. |
 | `remote_extension_wrong_host` or `remote_document_path_unavailable` | Update the remote copy of Selection Bridge, confirm it is listed under the remote host rather than only locally, and reload the window. |
 | `no_matching_workspace` | Run the exact `cd` command returned by the resolver, or open the terminal's current directory as the VS Code workspace. |
-| `connection_permission_denied` | Approve the agent tool's local-loopback permission request. The skill retries silently; do not reload VS Code. |
+| `extension_outdated` | Update Selection Bridge in the target VS Code window so the extension publishes pointer metadata to the registry, then run `Developer: Reload Window`. |
 | `remote_file_not_visible` | Run the returned `test -f ...` command in a new terminal from the target remote window. Start the agent there if it succeeds; restore or save the file if it fails. |
-| `connection_refused_after_retry` or `connection_timeout_after_retry` | Reload the target VS Code window. If it persists, start the agent in a new terminal from that remote window so it shares the extension host's loopback network. |

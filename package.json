@@ -2,7 +2,7 @@
   "name": "selection-bridge",
   "displayName": "Selection Bridge",
   "description": "Expose VS Code selection locations to terminal-based coding agents without sending selected text.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "Aquila Ziedins",
   "private": false,
   "license": "MIT",
@@ -24,7 +24,6 @@
     "out/extension.js",
     "out/pointer.js",
     "out/registry.js",
-    "out/server.js",
     "skills",
     "README.md"
   ],

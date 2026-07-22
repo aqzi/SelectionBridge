@@ -178,7 +178,7 @@ test('loadInstances filters stale entries and malformed JSON', () => {
   assert.deepEqual(loaded.map((entry) => entry.id), ['fresh']);
 });
 
-test('sanitizeInstance removes token and registry file', () => {
+test('sanitizeInstance removes legacy tokens and the registry file path', () => {
   const safe = sanitizeInstance({
     ...instance('one', ['/work/app']),
     token: 'secret',
@@ -197,19 +197,13 @@ test('parseArgs reports missing values as invalid arguments', () => {
   assert.match(result.payload.error.message, /--cwd requires a value/);
 });
 
-test('resolvePointer queries the selected instance and returns readable pointer metadata', async () => {
+test('resolvePointer returns the pointer embedded in the selected registry entry', async () => {
   const { project, file } = createProject();
   const pointer = selectedPointer(file);
 
   const result = await resolvePointer({
     cwd: path.join(project, 'src'),
-    loadInstances: () => [instance('one', [project])],
-    requestPointer: async (selectedInstance, options) => {
-      assert.equal(selectedInstance.id, 'one');
-      assert.equal(selectedInstance.token, 'token');
-      assert.deepEqual(options, { timeoutMs: undefined });
-      return { ok: true, pointer };
-    }
+    loadInstances: () => [instance('one', [project], pointer)]
   });
 
   assert.equal(result.ok, true);
@@ -219,145 +213,23 @@ test('resolvePointer queries the selected instance and returns readable pointer 
   assert.deepEqual(result.pointer, pointer);
 });
 
-test('automatically reloads the registry and retries an authentication race', async () => {
-  const { project, file } = createProject();
-  const oldInstance = instance('old', [project]);
-  const newInstance = { ...instance('new', [project]), token: 'new-token' };
-  let loadCount = 0;
-  let requestCount = 0;
-
-  const result = await resolvePointer({
-    cwd: project,
-    env: { SELECTION_BRIDGE_INSTANCE: 'old' },
-    loadInstances: () => (loadCount++ === 0 ? [oldInstance] : [newInstance]),
-    requestPointer: async (selectedInstance) => {
-      requestCount += 1;
-      if (requestCount === 1) {
-        throw requestError('authentication_failed', 'Old token');
-      }
-      assert.equal(selectedInstance.id, 'new');
-      assert.equal(selectedInstance.token, 'new-token');
-      return { ok: true, pointer: selectedPointer(file) };
-    }
-  });
-
-  assert.equal(result.ok, true);
-  assert.equal(requestCount, 2);
-  assert.equal(result.selectedBy, 'cwd_fallback');
-  assert.equal(result.recoveredBinding.staleInstanceId, 'old');
-});
-
-test('reports authentication failure only after the automatic retry also fails', async () => {
+test('reports an outdated extension when the registry entry has no pointer', async () => {
   const { project } = createProject();
-  let requestCount = 0;
+  const legacy = instance('legacy', [project]);
+  delete legacy.pointer;
+  legacy.port = 1234;
+  legacy.token = 'token';
 
   const result = await resolvePointer({
     cwd: project,
-    loadInstances: () => [instance('one', [project])],
-    requestPointer: async () => {
-      requestCount += 1;
-      throw requestError('authentication_failed', 'Bad token');
-    }
+    loadInstances: () => [legacy]
   });
 
-  assert.equal(requestCount, 2);
   assert.equal(result.ok, false);
-  assert.equal(result.error.code, 'authentication_failed_after_retry');
-  assert.match(result.error.recovery, /Reset Instance Id/);
-});
-
-test('reports connection refusal only after an automatic retry', async () => {
-  const { project } = createProject();
-  let requestCount = 0;
-
-  const result = await resolvePointer({
-    cwd: project,
-    loadInstances: () => [instance('one', [project])],
-    requestPointer: async () => {
-      requestCount += 1;
-      throw requestError('ECONNREFUSED', 'Connection refused');
-    }
-  });
-
-  assert.equal(requestCount, 2);
-  assert.equal(result.error.code, 'connection_refused_after_retry');
+  assert.equal(result.error.code, 'extension_outdated');
+  assert.match(result.error.recovery, /Update the Selection Bridge extension/);
   assert.match(result.error.recovery, /Developer: Reload Window/);
-});
-
-test('classifies a sandbox-blocked loopback connection as a permission request', async () => {
-  const { project } = createProject();
-  let requestCount = 0;
-
-  const result = await resolvePointer({
-    cwd: project,
-    loadInstances: () => [instance('one', [project])],
-    requestPointer: async () => {
-      requestCount += 1;
-      throw Object.assign(
-        new Error('connect EPERM 127.0.0.1:50659 - Local (0.0.0.0:0)'),
-        {
-          code: 'EPERM',
-          syscall: 'connect',
-          address: '127.0.0.1',
-          port: 50659
-        }
-      );
-    }
-  });
-
-  assert.equal(requestCount, 1);
-  assert.equal(result.ok, false);
-  assert.equal(result.error.code, 'connection_permission_denied');
-  assert.match(result.error.recovery, /permission/);
-  assert.doesNotMatch(JSON.stringify(result), /could not be queried|Show Current Pointer/);
-});
-
-test('connection failure for a remote instance tells the user to move the agent terminal', async () => {
-  const { project } = createProject();
-  const remote = remoteInstance('remote', project);
-
-  const result = await resolvePointer({
-    cwd: project,
-    loadInstances: () => [remote],
-    requestPointer: async () => {
-      throw requestError('ECONNREFUSED', 'Connection refused');
-    }
-  });
-
-  assert.equal(result.error.code, 'connection_refused_after_retry');
-  assert.match(result.error.recovery, /not sharing the extension host's loopback network/);
-});
-
-test('reports timeout only after an automatic retry', async () => {
-  const { project } = createProject();
-  let requestCount = 0;
-
-  const result = await resolvePointer({
-    cwd: project,
-    timeoutMs: 250,
-    loadInstances: () => [instance('one', [project])],
-    requestPointer: async () => {
-      requestCount += 1;
-      throw requestError('request_timeout', 'Timed out', { timeoutMs: 250 });
-    }
-  });
-
-  assert.equal(requestCount, 2);
-  assert.equal(result.error.code, 'connection_timeout_after_retry');
-  assert.match(result.error.message, /250ms/);
-});
-
-test('reports incompatible pointer responses with a matching-version recovery', async () => {
-  const { project } = createProject();
-
-  const result = await resolvePointer({
-    cwd: project,
-    loadInstances: () => [instance('one', [project])],
-    requestPointer: async () => ({ ok: true })
-  });
-
-  assert.equal(result.error.code, 'protocol_mismatch');
-  assert.match(result.error.recovery, /matching versions/);
+  assert.doesNotMatch(JSON.stringify(result), /"token"/);
 });
 
 test('reports the exact action when VS Code has no active editor', async () => {
@@ -365,11 +237,13 @@ test('reports the exact action when VS Code has no active editor', async () => {
 
   const result = await resolvePointer({
     cwd: project,
-    loadInstances: () => [instance('one', [project])],
-    requestPointer: async () => ({
-      ok: true,
-      pointer: { kind: 'none', capturedAt: new Date().toISOString(), selections: [] }
-    })
+    loadInstances: () => [
+      instance('one', [project], {
+        kind: 'none',
+        capturedAt: '2026-07-20T10:00:00.000Z',
+        selections: []
+      })
+    ]
   });
 
   assert.equal(result.error.code, 'no_active_editor');
@@ -381,10 +255,8 @@ test('asks the user to save an untitled document before retrying', async () => {
 
   const result = await resolvePointer({
     cwd: project,
-    loadInstances: () => [instance('one', [project])],
-    requestPointer: async () => ({
-      ok: true,
-      pointer: {
+    loadInstances: () => [
+      instance('one', [project], {
         kind: 'selection',
         document: {
           uri: 'untitled:Untitled-1',
@@ -393,8 +265,8 @@ test('asks the user to save an untitled document before retrying', async () => {
           isDirty: true
         },
         selections: []
-      }
-    })
+      })
+    ]
   });
 
   assert.equal(result.error.code, 'untitled_document');
@@ -406,14 +278,12 @@ test('accepts a readable selected document from a remote workspace', async () =>
 
   const result = await resolvePointer({
     cwd: project,
-    loadInstances: () => [remoteInstance('remote', project)],
-    requestPointer: async () => ({
-      ok: true,
-      pointer: selectedPointer(file, {
+    loadInstances: () => [
+      remoteInstance('remote', project, selectedPointer(file, {
         uri: `vscode-remote://ssh-remote${file}`,
         scheme: 'vscode-remote'
-      })
-    })
+      }))
+    ]
   });
 
   assert.equal(result.ok, true);
@@ -425,10 +295,8 @@ test('reports an outdated remote pointer that has no execution path', async () =
 
   const result = await resolvePointer({
     cwd: project,
-    loadInstances: () => [instance('one', [project])],
-    requestPointer: async () => ({
-      ok: true,
-      pointer: {
+    loadInstances: () => [
+      instance('one', [project], {
         kind: 'selection',
         document: {
           uri: 'vscode-remote://ssh-remote/workspaces/app/file.ts',
@@ -436,8 +304,8 @@ test('reports an outdated remote pointer that has no execution path', async () =
           isDirty: false
         },
         selections: []
-      }
-    })
+      })
+    ]
   });
 
   assert.equal(result.error.code, 'remote_document_path_unavailable');
@@ -450,14 +318,12 @@ test('reports when the selected remote file is not visible to this terminal', as
 
   const result = await resolvePointer({
     cwd: project,
-    loadInstances: () => [remoteInstance('remote', project)],
-    requestPointer: async () => ({
-      ok: true,
-      pointer: selectedPointer(missingFile, {
+    loadInstances: () => [
+      remoteInstance('remote', project, selectedPointer(missingFile, {
         uri: `vscode-remote://ssh-remote${missingFile}`,
         scheme: 'vscode-remote'
-      })
-    })
+      }))
+    ]
   });
 
   assert.equal(result.error.code, 'remote_file_not_visible');
@@ -470,11 +336,7 @@ test('reports unsaved selected files with an exact save instruction', async () =
 
   const result = await resolvePointer({
     cwd: project,
-    loadInstances: () => [instance('one', [project])],
-    requestPointer: async () => ({
-      ok: true,
-      pointer: selectedPointer(file, { isDirty: true })
-    })
+    loadInstances: () => [instance('one', [project], selectedPointer(file, { isDirty: true }))]
   });
 
   assert.equal(result.error.code, 'document_dirty');
@@ -487,8 +349,7 @@ test('reports when the selected file no longer exists', async () => {
 
   const result = await resolvePointer({
     cwd: project,
-    loadInstances: () => [instance('one', [project])],
-    requestPointer: async () => ({ ok: true, pointer: selectedPointer(missingFile) })
+    loadInstances: () => [instance('one', [project], selectedPointer(missingFile))]
   });
 
   assert.equal(result.error.code, 'selected_file_missing');
@@ -501,8 +362,7 @@ test('reports when the terminal cannot read the selected file', async () => {
 
   const result = await resolvePointer({
     cwd: project,
-    loadInstances: () => [instance('one', [project])],
-    requestPointer: async () => ({ ok: true, pointer: selectedPointer(file) }),
+    loadInstances: () => [instance('one', [project], selectedPointer(file))],
     fileSystem: {
       constants: fs.constants,
       accessSync: () => {
@@ -541,13 +401,9 @@ function selectedPointer(file, documentOverrides = {}) {
   };
 }
 
-function requestError(code, message, details = undefined) {
-  return Object.assign(new Error(message), { code, ...(details ? { details } : {}) });
-}
-
-function remoteInstance(id, workspacePath = undefined) {
+function remoteInstance(id, workspacePath = undefined, pointer = undefined) {
   return {
-    ...instance(id, []),
+    ...instance(id, [], pointer),
     workspaceFolders: [
       {
         name: 'app',
@@ -566,12 +422,10 @@ function remoteInstance(id, workspacePath = undefined) {
   };
 }
 
-function instance(id, workspacePaths) {
+function instance(id, workspacePaths, pointer = undefined) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id,
-    port: 1234,
-    token: 'token',
     pid: 100,
     workspaceName: id,
     workspaceFolders: workspacePaths.map((workspacePath, index) => ({
@@ -580,8 +434,11 @@ function instance(id, workspacePaths) {
       path: workspacePath,
       index
     })),
-    lastPointerKind: 'selection',
-    lastSelectionCapturedAt: '2026-07-20T10:00:00.000Z',
+    pointer: pointer || {
+      kind: 'cursor',
+      capturedAt: '2026-07-20T10:00:00.000Z',
+      selections: []
+    },
     createdAt: '2026-07-20T10:00:00.000Z',
     updatedAt: '2026-07-20T10:00:00.000Z'
   };

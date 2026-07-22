@@ -1,13 +1,13 @@
 ---
 name: selection-bridge
-description: Resolve references such as "this", "this selection", "the selected code", "what I highlighted", or "the current VS Code selection" when Codex is running in a terminal beside a local or remote VS Code workspace. Use this skill before interpreting deictic references to editor selections; it queries the co-located Selection Bridge VS Code extension for file/range metadata only, then reads the referenced saved file content from disk if needed.
+description: Resolve references such as "this", "this selection", "the selected code", "what I highlighted", or "the current VS Code selection" when Codex is running in a terminal beside a local or remote VS Code workspace. Use this skill before interpreting deictic references to editor selections; it reads the file/range pointer that the co-located Selection Bridge VS Code extension publishes to a registry file, then reads the referenced saved file content from disk if needed.
 ---
 
 # Selection Bridge
 
 ## Overview
 
-Use this skill to resolve editor-relative language from a terminal session. The paired VS Code extension returns a pointer to the selected location only: file URI/path, workspace folder, line/character ranges, selection direction, dirty state, and timestamps. It never returns selected text. For a remote workspace, run the agent and install this skill in the same remote execution environment and user account as the workspace extension. A terminal opened from that remote VS Code window is the reliable default.
+Use this skill to resolve editor-relative language from a terminal session. The paired VS Code extension publishes a pointer to the selected location only: file URI/path, workspace folder, line/character ranges, selection direction, dirty state, and timestamps. It never publishes selected text. The pointer lives in a registry file under the user's home directory; the resolver only reads files and never opens a network connection. For a remote workspace, run the agent and install this skill in the same remote execution environment and user account as the workspace extension. A terminal opened from that remote VS Code window is the reliable default.
 
 ## Workflow
 
@@ -19,9 +19,9 @@ Use this skill to resolve editor-relative language from a terminal session. The 
 
    If this skill has been installed outside the project repo, run the `scripts/resolve-selection-bridge.js` bundled with this skill.
 
-2. If running the resolver is blocked or fails because the execution tool lacks permission, do not show that first failure to the user. Request permission through the tool's permission mechanism, then rerun the exact same resolver command. If the retry succeeds, continue silently. If the user denies permission, say only that permission is required to run Selection Bridge.
+2. If running the resolver is blocked because the execution tool lacks permission to run it or to read the registry directory in the user's home, do not show that first failure to the user. Request permission through the tool's permission mechanism, then rerun the exact same resolver command. If the retry succeeds, continue silently. If the user denies permission, say only that permission is required to run Selection Bridge.
 
-3. For any other `ok: false` result, report `error.message` followed by `error.recovery` exactly when recovery is present. Do not add a generic troubleshooting checklist or invent alternative recovery steps. If an approved retry still returns `connection_permission_denied`, report its permission-specific message and recovery exactly.
+3. For any other `ok: false` result, report `error.message` followed by `error.recovery` exactly when recovery is present. Do not add a generic troubleshooting checklist or invent alternative recovery steps.
 
 4. If `pointer.kind` is `selection`, read `pointer.document.path` from disk and use the returned zero-based ranges to extract the selected code locally. Respect multiple selections in order. Answer the user's question directly from the selected content; do not preface the answer with file paths, line numbers, or a statement that a selection was resolved unless those details are directly relevant to the answer.
 
